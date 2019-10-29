@@ -1,7 +1,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 module Latte.Types.Syntax
   ( Id(..), Ann(..), Lit(..), Op(..), OpType(..), Expr(..), Stmt(..)
-  , Type(..), Arg(..), FunDef(..), Program(..)
+  , Type(..), Arg(..), TopDef(..), Program(..)
   ) where
 
 import Data.List.NonEmpty(NonEmpty)
@@ -60,18 +60,21 @@ data Expr (l :: Nat) where
 deriving instance Show (Expr n)
 
 
-data Stmt expr
-  = SAssg Ann Id expr
-  | SDecl Ann Type (NonEmpty (Id, Maybe expr))
+type E = Expr 0
+
+
+data Stmt
+  = SAssg Ann Id E
+  | SDecl Ann Type (NonEmpty (Id, Maybe E))
   | SIncr Ann Id
   | SDecr Ann Id
-  | SRet Ann expr
+  | SRet Ann E
   | SVRet Ann
-  | SCond Ann expr (Stmt expr)
-  | SCondElse Ann expr (Stmt expr) (Stmt expr)
-  | SWhile Ann expr (Stmt expr)
-  | SExp Ann expr
-  | SBlock Ann [Stmt expr]
+  | SCond Ann E Stmt
+  | SCondElse Ann E Stmt Stmt
+  | SWhile Ann E Stmt
+  | SExp Ann E
+  | SBlock Ann [Stmt]
   | SEmpty Ann
   deriving (Show)
 
@@ -84,9 +87,9 @@ data Arg = Arg Ann Type Id
   deriving (Show)
 
 
-data FunDef = FunDef Ann Type Id [Arg] (Stmt (Expr 0))
+data TopDef = FunDef Ann Type Id [Arg] Stmt
   deriving (Show)
 
 
-newtype Program = Program [FunDef]
+newtype Program = Program [TopDef]
   deriving (Show)

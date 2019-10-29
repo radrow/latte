@@ -17,7 +17,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import           Prelude hiding (lex, LT, GT, EQ, exp)
 
 import Latte.Types.Syntax
-import Latte.Types.AST hiding (Op(..), Expr(..), FunDef, Program)
+-- import Latte.Types.AST hiding (Op(..), Expr(..), FunDef, Program)
 import Latte.PP
 
 
@@ -223,7 +223,7 @@ semicolon :: Parser ()
 semicolon = void $ symbol ";"
 
 
-stmt :: Parser (Stmt (Expr 0))
+stmt :: Parser Stmt
 stmt = choice
   [ block
   , withAnnP SAssg <*> try (ident <* operator "=") <*> exp <* semicolon
@@ -240,7 +240,7 @@ stmt = choice
   ]
 
 
-block :: Parser (Stmt (Expr 0))
+block :: Parser Stmt
 block = withAnnP SBlock <*> brac (many stmt)
 
 
@@ -257,10 +257,10 @@ arg :: Parser Arg
 arg = withAnnP Arg <*> type_ <*> ident
 
 
-funDef :: Parser FunDef
-funDef =
+topDef :: Parser TopDef
+topDef =
   (withAnnP FunDef) <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> block
 
 
 program :: Parser Program
-program = Program <$> many funDef
+program = Program <$> many topDef

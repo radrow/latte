@@ -37,6 +37,7 @@ library:
     - containers
     - free
     - ghc
+    - tardis
 
 executables:
   lattec:
