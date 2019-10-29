@@ -1,0 +1,53 @@
+name:                latte
+version:             0.1.0.0
+github:              "radrow/latte"
+license:             BSD3
+author:              "Radosław Rowicki"
+maintainer:          "rr386088@students.mimuw.edu.pl"
+copyright:           "2019 Radosław Rowicki"
+
+extra-source-files:
+- README.md
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/radrow/latte#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+
+library:
+  source-dirs: src
+  default-extensions:
+    - LambdaCase
+    - GADTs
+    - DataKinds
+    - MultiWayIf
+    - KindSignatures
+    - TypeFamilies
+    - TypeOperators
+  dependencies:
+    - mtl
+    - free
+    - ghc-prim
+    - megaparsec
+    - parser-combinators
+    - text
+    - containers
+    - free
+    - ghc
+
+executables:
+  lattec:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    - -O2
+    - -Weverything
+    - -Wno-implicit-prelude
+    dependencies:
+    - latte
