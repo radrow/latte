@@ -17,7 +17,7 @@ data Ann = Ann { file :: FilePath, line :: Int, column :: Int }
 
 
 data Lit
-  = LInt Int
+  = LInt Integer
   | LString String
   | LBool Bool
   deriving (Show)

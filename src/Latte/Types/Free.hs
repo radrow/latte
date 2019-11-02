@@ -45,7 +45,7 @@ exprM = \case
   EAddOp ann op e1 e2 -> semOp ann (Op op) (exprM e1) (exprM e2)
   EMulOp ann op e1 e2 -> semOp ann (Op op) (exprM e1) (exprM e2)
   ENot   ann e -> exprM e >>= \ee -> liftF $ ENotF ann ee id
-  ENeg   ann e -> exprM e >>= \ee -> liftF $ ENotF ann ee id
+  ENeg   ann e -> exprM e >>= \ee -> liftF $ ENegF ann ee id
   ELit   ann l -> liftF $ ELitF ann l id
   EApp   ann f args -> do
     regs <- mapM exprM args

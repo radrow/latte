@@ -71,7 +71,7 @@ lId :: Parser String
 lId = lex $ liftA2 (:) lowerChar (many alphaNumChar)
 
 
-signed :: Parser Int
+signed :: Parser Integer
 signed = lex $ L.decimal
 
 
@@ -158,64 +158,64 @@ mulOp = choice
   ]
 
 
-exp :: Parser (Expr 0)
-exp = exp0
+expr :: Parser (Expr 0)
+expr = expr0
 
 
-exp0 :: Parser (Expr 0)
-exp0 = choice
-  [ withAnnP EOr <*> (try $ exp1 <* operator "||") <*> exp0
-  , ECoe <$> exp1
+expr0 :: Parser (Expr 0)
+expr0 = choice
+  [ withAnnP EOr <*> (try $ expr1 <* operator "||") <*> expr0
+  , ECoe <$> expr1
   ]
 
 
-exp1 :: Parser (Expr 1)
-exp1 = choice
-  [ withAnnP EAnd <*> (try $ exp2 <* operator "&&") <*> exp1
-  , ECoe <$> exp2
+expr1 :: Parser (Expr 1)
+expr1 = choice
+  [ withAnnP EAnd <*> (try $ expr2 <* operator "&&") <*> expr1
+  , ECoe <$> expr2
   ]
 
 
-exp2 :: Parser (Expr 2)
-exp2 = choice
-  [ try $ (ECoe <$> exp3) >>= infixL (flip ERelOp <$> relOp) exp3
-  , ECoe <$> exp3
+expr2 :: Parser (Expr 2)
+expr2 = choice
+  [ try $ (ECoe <$> expr3) >>= infixL (flip ERelOp <$> relOp) expr3
+  , ECoe <$> expr3
   ]
 
 
-exp3 :: Parser (Expr 3)
-exp3 = choice
-  [ try $ (ECoe <$> exp4) >>= infixL (flip EAddOp <$> addOp) exp4
-  , ECoe <$> exp4
+expr3 :: Parser (Expr 3)
+expr3 = choice
+  [ try $ (ECoe <$> expr4) >>= infixL (flip EAddOp <$> addOp) expr4
+  , ECoe <$> expr4
   ]
 
 
-exp4 :: Parser (Expr 4)
-exp4 = choice
-  [ try $ (ECoe <$> exp5) >>= infixL (flip EMulOp <$> mulOp) exp5
-  , ECoe <$> exp5
+expr4 :: Parser (Expr 4)
+expr4 = choice
+  [ try $ (ECoe <$> expr5) >>= infixL (flip EMulOp <$> mulOp) expr5
+  , ECoe <$> expr5
   ]
 
 
-exp5 :: Parser (Expr 5)
-exp5 = choice
-  [ operator "!" *> withAnn (flip ENot <$> exp6)
-  , operator "-" *> withAnn (flip ENeg <$> exp6)
-  , ECoe <$> exp6
+expr5 :: Parser (Expr 5)
+expr5 = choice
+  [ operator "!" *> withAnn (flip ENot <$> expr6)
+  , operator "-" *> withAnn (flip ENeg <$> expr6)
+  , ECoe <$> expr6
   ]
 
 
-exp6 :: Parser (Expr 6)
-exp6 = choice
-  [ withAnnP EPar <*> paren exp0
+expr6 :: Parser (Expr 6)
+expr6 = choice
+  [ withAnnP EPar <*> paren expr0
   , withAnnP ELit <*> lit
-  , try $ withAnnP EApp <*> ident <*> (paren $ sepBy exp0 (symbol ","))
+  , try $ withAnnP EApp <*> ident <*> paren (sepBy expr0 (symbol ","))
   , withAnnP EVar <*> ident
   ]
 
 
 decl :: Parser (Id, Maybe (Expr 0))
-decl = liftA2 (,) (try $ ident <* operator "=") (Just <$> exp)
+decl = liftA2 (,) (try $ ident <* operator "=") (Just <$> expr)
   <|> liftA2 (,) ident (pure Nothing)
 
 
@@ -226,16 +226,16 @@ semicolon = void $ symbol ";"
 stmt :: Parser Stmt
 stmt = choice
   [ block
-  , withAnnP SAssg <*> try (ident <* operator "=") <*> exp <* semicolon
+  , withAnnP SAssg <*> try (ident <* operator "=") <*> expr <* semicolon
   , withAnnP SDecl <*> type_ <*> sepBy1 decl (symbol ",") <* semicolon
   , withAnnP SIncr <*> try (ident <* operator "++") <* semicolon
   , withAnnP SDecr <*> try (ident <* operator "--") <* semicolon
-  , withAnnP SRet <*> (try $ word "return" *> exp) <* semicolon
+  , withAnnP SRet <*> (try $ word "return" *> expr) <* semicolon
   , withAnn (SVRet <$ word "return") <* semicolon
   , withAnnP (\a c t me -> case me of {Nothing -> SCond a c t; Just e -> SCondElse a c t e})
-    <*> (word "if" *> paren exp) <*> stmt <*> optional (word "else" *> stmt)
-  , withAnnP SWhile <*> (word "while" *> paren exp) <*> stmt
-  , withAnnP SExp <*> exp <* semicolon
+    <*> (word "if" *> paren expr) <*> stmt <*> optional (word "else" *> stmt)
+  , withAnnP SWhile <*> (word "while" *> paren expr) <*> stmt
+  , withAnnP SExp <*> expr <* semicolon
   , withAnn (pure SEmpty) <* semicolon
   ]
 
