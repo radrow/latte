@@ -2,23 +2,21 @@
 module Latte.Parse where
 
 import           Data.Functor(void)
-import           Control.Applicative        (liftA2, (<**>))
+import           Control.Applicative        (liftA2)
 import           Control.Applicative.Combinators.NonEmpty(sepBy1)
 import           Control.Monad
 import           Control.Monad.Identity
 import           Data.Void
 import           Data.Text(Text)
-import qualified Data.Text as T
 import           Data.List as DL
 import           Data.Bifunctor
 import           Text.Megaparsec hiding (sepBy1)
 import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import           Prelude hiding (lex, LT, GT, EQ, exp)
+import           Prelude hiding (lex, LT, GT, EQ)
 
 import Latte.Types.Syntax
--- import Latte.Types.AST hiding (Op(..), Expr(..), FunDef, Program)
-import Latte.PP
+import Latte.Types.Latte
 
 
 type Parser = ParsecT Void Text Identity
@@ -53,6 +51,7 @@ keywords =
   , "if"
   , "else"
   , "int", "string", "bool", "void"
+  , "true", "false"
   ]
 
 
@@ -130,7 +129,7 @@ lit :: Parser Lit
 lit = choice
   [ LInt <$> signed
   , LString <$> between (symbol "\"") (symbol "\"") (many escapedChar)
-  , LBool <$> ((True <$ string "true") <|> (False <$ string "false"))
+  , LBool <$> ((True <$ word "true") <|> (False <$ word "false"))
   ]
 
 
@@ -246,10 +245,10 @@ block = withAnnP SBlock <*> brac (many stmt)
 
 type_ :: Parser Type
 type_ = choice
-  [ withAnn (TInt <$ word "int")
-  , withAnn (TBool <$ word "bool")
-  , withAnn (TString <$ word "string")
-  , withAnn (TVoid <$ word "void")
+  [ TInt <$ word "int"
+  , TBool <$ word "bool"
+  , TString <$ word "string"
+  , TVoid <$ word "void"
   ]
 
 

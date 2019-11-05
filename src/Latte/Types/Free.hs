@@ -11,6 +11,7 @@ import Control.Monad.Writer
 
 import qualified Latte.Types.Syntax as S(Op)
 import Latte.Types.Syntax hiding (Op)
+import Latte.Types.Latte hiding (Op)
 
 
 data Op where
@@ -107,35 +108,35 @@ stmtM = \case
   SBlock ann sts -> mapM stmtM sts >>= \stse -> liftF $ SBlockF ann stse id
   SEmpty ann -> liftF $ SEmptyF ann id
 
-data TopDefF expprod prod res
-  = FunDefF Ann Type Id [Arg] prod (prod -> res)
-  | LiftStmtF (StmtM expprod prod prod) (prod -> res)
+data TopDefF expprod stmtprod prod res
+  = FunDefF Ann Type Id [Arg] stmtprod (prod -> res)
+  | LiftStmtF (StmtM expprod stmtprod stmtprod) (stmtprod -> res)
   deriving Functor
 
-type TopDefM expprod prod = Free (TopDefF expprod prod)
+type TopDefM expprod prod topprod = Free (TopDefF expprod prod topprod)
 
 
-liftStmt :: Stmt -> TopDefM expprod prod prod
+liftStmt :: Stmt -> TopDefM expprod stmtprod topprod stmtprod
 liftStmt s = liftF $ LiftStmtF (stmtM s) id
 
 
-topDefM :: TopDef -> TopDefM expprod prod prod
+topDefM :: TopDef -> TopDefM expprod stmtprod prod prod
 topDefM = \case
   FunDef ann t i args stmt -> do
     stmte <- liftStmt stmt
     liftF $ FunDefF ann t i args stmte id
 
-data ProgramF expprod prod res
-  = ProgramF [prod] (prod -> res)
-  | LiftTopDefF (TopDefM expprod prod prod) (prod -> res)
+data ProgramF expprod stmtprod topprod res
+  = ProgramF [topprod] (topprod -> res)
+  | LiftTopDefF (TopDefM expprod stmtprod topprod topprod) (topprod -> res)
   deriving Functor
 
-type ProgramM expprod prod = Free (ProgramF expprod prod)
+type ProgramM expprod prod topprod = Free (ProgramF expprod prod topprod)
 
-liftTopDef :: TopDef -> ProgramM expprod prod prod
+liftTopDef :: TopDef -> ProgramM expprod stmtprod topprod topprod
 liftTopDef t = liftF $ LiftTopDefF (topDefM t) id
 
-programM :: Program -> ProgramM expprod prod prod
+programM :: Program -> ProgramM expprod stmtprod topprod topprod
 programM (Program ts) = do
   tops <- mapM liftTopDef ts
   liftF $ ProgramF tops id

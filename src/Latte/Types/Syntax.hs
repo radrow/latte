@@ -1,26 +1,12 @@
 {-# LANGUAGE StandaloneDeriving #-}
 module Latte.Types.Syntax
-  ( Id(..), Ann(..), Lit(..), Op(..), OpType(..), Expr(..), Stmt(..)
-  , Type(..), Arg(..), TopDef(..), Program(..)
+  ( Op(..), OpType(..), Expr(..), Stmt(..)
+  , Arg(..), TopDef(..), Program(..)
   ) where
 
 import Data.List.NonEmpty(NonEmpty)
 import GHC.TypeNats(Nat, type (+))
-
-
-newtype Id = Id {iName :: String}
-  deriving (Show, Eq, Ord)
-
-
-data Ann = Ann { file :: FilePath, line :: Int, column :: Int }
-  deriving (Show)
-
-
-data Lit
-  = LInt Integer
-  | LString String
-  | LBool Bool
-  deriving (Show)
+import Latte.Types.Latte(Id, Ann, Lit, Type)
 
 
 data OpType = Rel | Add | Mul | Log
@@ -76,10 +62,6 @@ data Stmt
   | SExp Ann E
   | SBlock Ann [Stmt]
   | SEmpty Ann
-  deriving (Show)
-
-
-data Type = TInt Ann | TString Ann | TBool Ann | TFun Ann [Type] Type | TVoid Ann
   deriving (Show)
 
 

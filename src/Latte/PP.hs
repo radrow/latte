@@ -6,6 +6,7 @@ import Data.List.NonEmpty(toList)
 import Latte.Types.Free
 
 import Latte.Types.Syntax as S hiding (Op)
+import Latte.Types.Latte
 
 
 indentFactor :: Int
@@ -28,11 +29,11 @@ ppArg (Arg _ t i) = ppType t ++ " " ++ iName i
 
 ppType :: Type -> String
 ppType = \case
-  TInt _ -> "int"
-  TString _ -> "string"
-  TBool _ -> "bool"
-  TVoid _ -> "void"
-  TFun _ targs rett -> ppType rett ++ "(" ++ ppComma ppType targs ++ ")"
+  TInt -> "int"
+  TString -> "string"
+  TBool -> "bool"
+  TVoid -> "void"
+  TFun targs rett -> ppType rett ++ "(" ++ ppComma ppType targs ++ ")"
 
 
 ppOp :: Op -> String
@@ -101,22 +102,22 @@ ppStmt = foldFree interpret where
     SLiftExprF ex k -> k <$> ppExpr ex
 
 
-ppTopDef :: TopDefM String IndentCont a -> Printer a
+ppTopDef :: TopDefM String IndentCont String a -> Printer a
 ppTopDef = foldFree interpret where
-  interpret :: TopDefF String IndentCont a -> Printer a
+  interpret :: TopDefF String IndentCont String a -> Printer a
   interpret = \case
-    FunDefF _ t n args stmts k -> \s -> k $ \_ ->
+    FunDefF _ t n args stmts k -> \s -> k $
       ppType t ++ " " ++ iName n ++ "(" ++ ppComma ppArg args ++ ") " ++ stmts 0 ++ s
     LiftStmtF ex k -> k <$> ppStmt ex
 
 
-ppProgram :: ProgramM String IndentCont a -> Printer a
+ppProgram :: ProgramM String IndentCont String a -> Printer a
 ppProgram = foldFree interpret where
-  interpret :: ProgramF String IndentCont a -> Printer a
+  interpret :: ProgramF String IndentCont String a -> Printer a
   interpret = \case
-    ProgramF tops k -> \s -> k $ \_ -> concatMap ((++"\n\n"). ($0)) tops ++ s
+    ProgramF tops k -> \s -> k $ concatMap (++"\n\n") tops ++ s
     LiftTopDefF ex k -> k <$> ppTopDef ex
 
 
-prettyPrint :: ProgramM String IndentCont IndentCont -> String
-prettyPrint p = ppProgram p "" 0
+prettyPrint :: ProgramM String IndentCont String String -> String
+prettyPrint p = ppProgram p ""
