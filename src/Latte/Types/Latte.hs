@@ -17,5 +17,5 @@ newtype Id = Id {iName :: String}
 data Ann = Ann { file :: FilePath, line :: Int, column :: Int }
   deriving (Show)
 
-data Type = TInt | TString | TBool | TFun [Type] Type | TVoid
+data Type = TInt | TString | TBool | TVoid
   deriving (Show, Eq)

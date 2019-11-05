@@ -35,15 +35,20 @@ newSupply :: Supply
 newSupply = Supply 0 0 0
 
 
+
+data GlobalEnv = GlobalEnv
+  { _genvFuns :: Map Id (Type, [Type])
+  }
+makeLenses ''GlobalEnv
+
+
 data Env = Env
   { _envVars  :: Map Id LlvmVar
   , _envTypes :: Map Id Type
   , _envFunRetType :: Type
+  , _envGlobal :: GlobalEnv
   }
 makeLenses ''Env
-
-newEnv :: Env
-newEnv = Env {_envTypes = M.empty, _envVars = M.empty}
 
 
 data SupplyState = SupplyState
@@ -80,7 +85,6 @@ buildType = \case
   TBool -> i1
   TVoid -> LMVoid
   TString -> LMPointer i8
-  TFun _ _ -> error "LLVM fun type"
 
 
 addVar :: Id -> Type -> LlvmVar -> Env -> Env
@@ -168,7 +172,7 @@ assertRetType t = asks (^. envFunRetType) >>= flip typeMatch t
 
 type ExprProd = Compiler ([LlvmStatement], LlvmVar, Type)
 type StmtProd = Compiler ([LlvmStatement], Env)
-type TopProd = Except String [LlvmFunction]
+type TopProd = ReaderT GlobalEnv (Except String) ([LlvmFunction], GlobalEnv)
 
 expr :: ExprM ExprProd a -> Supplier a
 expr = foldFree $ \case
@@ -183,7 +187,11 @@ expr = foldFree $ \case
       let tv = buildType t
       loadcode <- loadVar i (reg tv)
       pure (loadcode, (reg tv), t)
-  -- EAppF _ f args k -> undefined
+  EAppF _ f args k -> do
+    reg <- newReg
+    pure $ k $ do
+      (rt, ats) <- asks $ (^. genvFuns) . (^. envGlobal)
+      
   ENegF _ ve k -> do
     reg <- newTypedReg TInt
     pure $ k $ do
@@ -328,16 +336,17 @@ stmt = foldFree $ \case
 topDef :: TopDefM ExprProd StmtProd TopProd a -> Supplier a
 topDef = foldFree $ \case
   FunDefF _ retType fname args body k -> do
-    argRegs <- mapM (\(Arg _ t n) -> newTypedReg t >>= \r -> pure (n, t, r)) args
+    argRegs <- mapM (\(Arg _ t n) -> pure (n, t, LMNLocalVar (fsLit $ iName n) (buildType t))) args
     argPtrRegs <- mapM (\(Arg _ t n) -> (,) n <$> newPtrReg t) args
     pure $ k $ do
+      genv <- asks $ over genvFuns (M.insert fname (retType, fmap (\(Arg _ t _) -> t) args))
       let venv = M.fromList argPtrRegs
           tenv = M.fromList $ fmap (\(Arg _ t n) -> (n, t)) args
-          argAssgCode = zip argRegs argPtrRegs >>= \((_, tp, reg), (_, arg)) ->
-            [ Assignment reg (Alloca (buildType tp) 1)
-            , Store reg arg
+          argAssgCode = zip argRegs argPtrRegs >>= \((_, tp, areg), (_, preg)) ->
+            [ Assignment preg (Alloca (buildType tp) 1)
+            , Store areg preg
             ]
-      (bodyCode, _) <- runReaderT body (Env venv tenv retType)
+      (bodyCode, _) <- lift $ runReaderT body (Env venv tenv retType genv)
       let decl = LlvmFunctionDecl
                  (fsLit $ iName fname)
                  Internal
@@ -355,5 +364,5 @@ topDef = foldFree $ \case
                 [LlvmBlock (mkCoVarUnique 2137)
                  (argAssgCode ++ bodyCode)
                 ]
-      pure [def]
+      pure ([def], genv)
   LiftStmtF s k -> k <$> stmt s
