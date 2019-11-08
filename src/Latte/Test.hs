@@ -5,7 +5,7 @@ import qualified Data.Text.IO as T
 import Latte.Parse as P
 import Latte.PP
 import Latte.LLVM as L
-import Latte.Types.Free
+import Latte.Types.AST
 import Llvm
 import Unique
 import Outputable
@@ -23,9 +23,9 @@ test p inp =
 
 testFile f = do
   src <- T.readFile f
-  case runParser program f src of
+  case runParser P.program f src of
     Left e -> putStrLn e
-    Right p -> putStrLn $ prettyPrint $ programM p
+    Right p -> putStrLn $ ppProgram $ entailProgram p
 
 
 -- testLLStmts es = do
@@ -63,16 +63,10 @@ testFile f = do
 --            Left s -> putStrLn s
 
 
-testLLFun es = do
-  case runParser P.topDef "test" es
+testPrg es = do
+  case runParser P.program "test" es
     of Left e -> putStrLn e
        Right p ->
-         case runExcept (evalState (L.topDef $ topDefM p) (SupplyState M.empty newSupply)) of
+         case L.program (entailProgram p) of
            Left e -> putStrLn e
-           Right ss -> putStrLn $ showSDocUnsafe $ ppLlvmModule $ LlvmModule
-             []
-             []
-             []
-             []
-             []
-             ss
+           Right ss -> putStrLn $ showSDocUnsafe $ ppLlvmModule $ ss

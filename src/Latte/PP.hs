@@ -1,13 +1,11 @@
-{-# LANGUAGE RankNTypes #-}
 module Latte.PP where
 
-import Control.Monad.Free
+
 import Data.List.NonEmpty(toList)
-import Latte.Types.Free
-
-import Latte.Types.Syntax as S hiding (Op)
+import Latte.Types.AST
+import Latte.Types.Syntax(Stmt(..))
 import Latte.Types.Latte
-
+import qualified Latte.Types.Syntax as S
 
 indentFactor :: Int
 indentFactor = 2
@@ -17,15 +15,26 @@ indent :: Int -> String -> String
 indent i s = take (i * indentFactor) (repeat ' ') ++ s
 
 
+ppExpr :: Expr -> String
+ppExpr = \case
+  ELit _ l -> case l of
+                LInt i -> show i
+                LBool True -> "true"
+                LBool False -> "false"
+                LString s -> show s
+  EApp _ f args -> iName f ++ "(" ++ ppComma ppExpr args ++ ")"
+  EVar _ x -> iName x
+  ENeg _ e -> "-" ++ ppExpr e
+  ENot _ e -> "!" ++ ppExpr e
+  EOp _ op a b -> "(" ++ ppExpr a ++ " " ++ ppOp op ++ " " ++ ppExpr b ++ ")"
+
 ppComma :: (a -> String) -> [a] -> String
 ppComma _ [] = ""
 ppComma p [arg] = p arg
 ppComma p (a:rest) = p a ++ ", " ++ ppComma p rest
 
-
 ppArg :: Arg -> String
 ppArg (Arg _ t i) = ppType t ++ " " ++ iName i
-
 
 ppType :: Type -> String
 ppType = \case
@@ -33,8 +42,6 @@ ppType = \case
   TString -> "string"
   TBool -> "bool"
   TVoid -> "void"
-  TFun targs rett -> ppType rett ++ "(" ++ ppComma ppType targs ++ ")"
-
 
 ppOp :: Op -> String
 ppOp = \case
@@ -52,72 +59,36 @@ ppOp = \case
   Op (S.Or _)    -> "||"
   Op (S.And _)   -> "&&"
 
+ppStmt :: Stmt Expr -> String
+ppStmt s = ppStmtI 0 s
 
-type IndentCont = Int -> String
-type Printer a = String -> a
-
-
-ind :: (IndentCont -> a) -> String -> Printer a
-ind k x = \s -> k (\i -> indent i x ++ s)
-
-
-ppExpr :: ExprM String a -> Printer a
-ppExpr = foldFree $ \case
-  EVarF _ x k -> \s -> k $ iName x ++ s
-  EAppF _ f args k -> \s -> k $ iName f ++ "(" ++ ppComma id args ++ ")" ++ s
-  ELitF _ l k -> \s -> k $ case l of
-                             LInt i -> show i ++ s
-                             LBool True -> "true" ++ s
-                             LBool False -> "false" ++ s
-                             LString s -> show s ++ s
-  ENegF _ e k -> \s -> k ("-" ++ e)
-  ENotF _ e k -> \s -> k ("!" ++ e)
-  EOpF  _ op l r k -> \s -> k ("(" ++ l ++ " " ++ ppOp op ++ " " ++ r ++ ")")
-
-
-ppStmt :: StmtM String IndentCont a -> Printer a
-ppStmt = foldFree interpret where
-  interpret :: forall x. StmtF String IndentCont x -> Printer x
-  interpret = \case
-    SAssgF _ n v k -> ind k $ iName n ++ " = " ++ v ++ ";"
-    SDeclF _ t vs k -> ind k $ ppType t ++ " " ++ ppComma dec (toList vs) ++ ";" where
+ppStmtI :: Int -> Stmt Expr -> String
+ppStmtI i s = indent i st where
+  st = case s of
+    SAssg _ n v -> iName n ++ " = " ++ ppExpr v
+    SDecl _ t vs -> ppType t ++ " " ++ ppComma dec (toList vs) where
       dec (n, Nothing) = iName n
-      dec (n, Just e) = iName n ++ " = " ++ e ++ ";"
-    SIncrF _ v k -> ind k $ iName v ++ "++" ++ ";"
-    SDecrF _ v k -> ind k $ iName v ++ "--" ++ ";"
-    SRetF _ e k -> ind k $ "return " ++ e ++ ";"
-    SVRetF _ k -> ind k $ "return;"
-    SCondF _ c t k -> \s -> k $ \i ->
-      indent i ("if(" ++ c ++ ")\n") ++ t (i + 1) ++ s
-    SCondElseF _ c t e k -> \s -> k $ \i ->
-      indent i ("if(" ++ c ++ ")\n") ++ t (i + 1) ++ "\n" ++
-      indent i "else\n" ++ e (i + 1) ++ s
-    SWhileF _ c b k -> \s -> k $ \i ->
-      indent i ("if(" ++ c ++ ")\n") ++ b (i + 1) ++ s
-    SExpF _ e k -> ind k (e ++ ";")
-    SBlockF _ [] k -> ind k "{}"
-    SBlockF _ sts k ->
-      \s -> k $ \i -> indent i "{\n" ++ concatMap (\f -> f (i + 1) ++ "\n") sts ++ indent i "}" ++ s
-    SEmptyF _ k -> ind k ""
-    SLiftExprF ex k -> k <$> ppExpr ex
+      dec (n, Just e) = iName n ++ " = " ++ ppExpr e
+    SIncr _ v -> iName v ++ "++"
+    SDecr _ v -> iName v ++ "--"
+    SRet _ e -> "return " ++ ppExpr e
+    SVRet _ -> "return"
+    SCond _ c t -> "if(" ++ ppExpr c ++ ")\n" ++ ppStmtI (i + 1) t
+    SCondElse _ c t e -> "if(" ++ ppExpr c ++ ")\n" ++ ppStmtI (i + 1) t ++ "\n" ++
+      indent i "else\n" ++ ppStmtI (i + 1) e
+    SWhile _ c b -> "while(" ++ ppExpr c ++ ")\n" ++ ppStmtI (i + 1) b
+    SExp _ e -> ppExpr e
+    SBlock _ [] -> "{}"
+    SBlock _ sts -> "{\n" ++
+      concatMap ((++";\n") . ppStmtI (i + 1)) sts ++
+      indent i "}"
+    SEmpty _ -> ""
 
 
-ppTopDef :: TopDefM String IndentCont String a -> Printer a
-ppTopDef = foldFree interpret where
-  interpret :: TopDefF String IndentCont String a -> Printer a
-  interpret = \case
-    FunDefF _ t n args stmts k -> \s -> k $
-      ppType t ++ " " ++ iName n ++ "(" ++ ppComma ppArg args ++ ") " ++ stmts 0 ++ s
-    LiftStmtF ex k -> k <$> ppStmt ex
+ppTopDef :: TopDef -> String
+ppTopDef (FunDef _ t name args body) =
+  ppType t ++ " " ++ iName name ++ "(" ++ ppComma ppArg args ++ ")\n" ++ ppStmtI 1 body
 
-
-ppProgram :: ProgramM String IndentCont String a -> Printer a
-ppProgram = foldFree interpret where
-  interpret :: ProgramF String IndentCont String a -> Printer a
-  interpret = \case
-    ProgramF tops k -> \s -> k $ concatMap (++"\n\n") tops ++ s
-    LiftTopDefF ex k -> k <$> ppTopDef ex
-
-
-prettyPrint :: ProgramM String IndentCont String String -> String
-prettyPrint p = ppProgram p ""
+ppProgram :: Program -> String
+ppProgram (Program funs) =
+  concatMap (\f -> ppTopDef f ++ "\n\n") funs

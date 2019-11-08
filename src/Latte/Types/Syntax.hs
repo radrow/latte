@@ -1,12 +1,12 @@
 {-# LANGUAGE StandaloneDeriving #-}
 module Latte.Types.Syntax
   ( Op(..), OpType(..), Expr(..), Stmt(..)
-  , Arg(..), TopDef(..), Program(..)
+  , TopDef(..), Program(..)
   ) where
 
 import Data.List.NonEmpty(NonEmpty)
 import GHC.TypeNats(Nat, type (+))
-import Latte.Types.Latte(Id, Ann, Lit, Type)
+import Latte.Types.Latte(Id, Ann, Lit, Type, Arg)
 
 
 data OpType = Rel | Add | Mul | Log
@@ -49,27 +49,23 @@ deriving instance Show (Expr n)
 type E = Expr 0
 
 
-data Stmt
-  = SAssg Ann Id E
-  | SDecl Ann Type (NonEmpty (Id, Maybe E))
+data Stmt e
+  = SAssg Ann Id e
+  | SDecl Ann Type (NonEmpty (Id, Maybe e))
   | SIncr Ann Id
   | SDecr Ann Id
-  | SRet Ann E
+  | SRet Ann e
   | SVRet Ann
-  | SCond Ann E Stmt
-  | SCondElse Ann E Stmt Stmt
-  | SWhile Ann E Stmt
-  | SExp Ann E
-  | SBlock Ann [Stmt]
+  | SCond Ann e (Stmt e)
+  | SCondElse Ann e (Stmt e) (Stmt e)
+  | SWhile Ann e (Stmt e)
+  | SExp Ann e
+  | SBlock Ann [Stmt e]
   | SEmpty Ann
   deriving (Show)
 
 
-data Arg = Arg Ann Type Id
-  deriving (Show)
-
-
-data TopDef = FunDef Ann Type Id [Arg] Stmt
+data TopDef = FunDef Ann Type Id [Arg] (Stmt E)
   deriving (Show)
 
 

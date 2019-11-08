@@ -3,6 +3,7 @@ module Latte.Types.Latte
   , Id(..)
   , Ann(..)
   , Type(..)
+  , Arg(..)
   ) where
 
 data Lit
@@ -19,3 +20,6 @@ data Ann = Ann { file :: FilePath, line :: Int, column :: Int }
 
 data Type = TInt | TString | TBool | TVoid
   deriving (Show, Eq)
+
+data Arg = Arg Ann Type Id
+  deriving (Show)

@@ -222,7 +222,7 @@ semicolon :: Parser ()
 semicolon = void $ symbol ";"
 
 
-stmt :: Parser Stmt
+stmt :: Parser (Stmt (Expr 0))
 stmt = choice
   [ block
   , withAnnP SAssg <*> try (ident <* operator "=") <*> expr <* semicolon
@@ -239,7 +239,7 @@ stmt = choice
   ]
 
 
-block :: Parser Stmt
+block :: Parser (Stmt (Expr 0))
 block = withAnnP SBlock <*> brac (many stmt)
 
 
