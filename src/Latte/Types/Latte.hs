@@ -4,6 +4,7 @@ module Latte.Types.Latte
   , Ann(..)
   , Type(..)
   , Arg(..)
+  , HasAnn(..)
   ) where
 
 data Lit
@@ -23,3 +24,7 @@ data Type = TInt | TString | TBool | TVoid
 
 data Arg = Arg Ann Type Id
   deriving (Show)
+
+
+class HasAnn a where
+  getAnn :: a -> Ann

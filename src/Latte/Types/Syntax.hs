@@ -6,7 +6,7 @@ module Latte.Types.Syntax
 
 import Data.List.NonEmpty(NonEmpty)
 import GHC.TypeNats(Nat, type (+))
-import Latte.Types.Latte(Id, Ann, Lit, Type, Arg)
+import Latte.Types.Latte(Id, Ann, Lit, Type, Arg, HasAnn(getAnn))
 
 
 data OpType = Rel | Add | Mul | Log
@@ -71,3 +71,19 @@ data TopDef = FunDef Ann Type Id [Arg] (Stmt E)
 
 newtype Program = Program [TopDef]
   deriving (Show)
+
+
+instance HasAnn (Stmt e) where
+  getAnn = \case
+    SAssg a _ _ -> a
+    SDecl a _ _ -> a
+    SIncr a _ -> a
+    SDecr a _ -> a
+    SRet a _ -> a
+    SVRet a -> a
+    SCond a _ _ -> a
+    SCondElse a _ _ _ -> a
+    SWhile a _ _ -> a
+    SExp a _ -> a
+    SBlock a _ -> a
+    SEmpty a -> a

@@ -30,12 +30,12 @@ library:
   dependencies:
     - mtl
     - free
+    - lens
     - ghc-prim
     - megaparsec
     - parser-combinators
     - text
     - containers
-    - free
     - ghc
     - tardis
 

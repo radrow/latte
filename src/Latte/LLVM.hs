@@ -19,7 +19,7 @@ import Data.Map(Map)
 import qualified Data.Map as M
 import Control.Monad.Free
 import Control.Monad.State
-import Control.Monad.Reader
+import Control.Monad.Reader as R
 import Control.Monad.Except
 import Llvm hiding (SRet)
 import FastString
@@ -44,7 +44,8 @@ type VarEnv = Map Id (Type, LlvmVar)
 
 data LocalEnv = LocalEnv
   { _lenvFunRetType :: Type
-  , _lenvFunName :: Id
+  , _lenvFunName    :: Id
+  , _lenvTailE      :: Bool
   }
 makeLenses ''LocalEnv
 
@@ -187,9 +188,9 @@ buildFunDecl n t args = LlvmFunctionDecl
 
 scoped :: LocalCompiler a -> LocalCompiler a
 scoped act = do
-  prevFs <- get
+  prevVE <- gets (^. csVarEnv)
   res <- act
-  put prevFs
+  modify $ over csVarEnv (const prevVE)
   return res
 
 
@@ -214,6 +215,7 @@ expr = \case
                          pure (ecode ++ pcode, ereg : pregs)
                          ) ([], []) (reverse $ zip ats args)
     reg <- lift $ newTypedReg rt
+    tailrec <- asks (^. lenvTailE)
     let funVar = LMGlobalVar
           (fsLit $ iName f)
           (LMFunction $ buildFunDecl f rt ats)
@@ -224,7 +226,7 @@ expr = \case
     pure $
       (argCode ++
        [Assignment reg
-         (Call StdCall funVar argRegs [])]
+         (Call (if tailrec then TailCall else StdCall) funVar argRegs [])]
       , reg, rt)
   ENeg _ ve -> do
     reg <- lift $ newTypedReg TInt
@@ -330,6 +332,11 @@ stmt = \case
   SExp _ e -> do
     (code, _, _) <- expr e
     pure code
+  SRet _ e@(EApp _ fname _) -> do
+    myF <- asks (^. lenvFunName)
+    (code, v, t) <- R.local (set lenvTailE $ if myF == fname then True else False) (expr e)
+    assertRetType t
+    pure $ code ++ [Return $ Just v]
   SRet _ e -> do
     (code, v, t) <- expr e
     assertRetType t
@@ -355,7 +362,8 @@ topDef = \case
           ]
         withArgs :: VarEnv -> VarEnv
         withArgs = M.union $ M.fromList $ fmap (\((n, r), (Arg _ t _)) -> (n, (t, r))) (zip argPtrRegs args)
-    bodyCode <- runReaderT (scoped $ modify (over csVarEnv withArgs) >> stmt body) (LocalEnv retType fname)
+    bodyCode <- runReaderT
+      (scoped $ modify (over csVarEnv withArgs) >> stmt body) (LocalEnv retType fname False)
     let decl = buildFunDecl fname retType (fmap (\(Arg _ t _) -> t) args)
         def = LlvmFunction
               decl
