@@ -4,6 +4,7 @@ import qualified Data.Text.IO as T
 
 import Latte.Parse as P
 import Latte.PP
+import Latte.Validator
 import Latte.LLVM as L
 import Latte.Types.AST
 import Llvm
@@ -62,11 +63,12 @@ testFile f = do
 --              ]
 --            Left s -> putStrLn s
 
+makePrg es = do
+  parsed <- runParser P.program "test" es
+  typed <- tcProgram (entailProgram parsed)
+  L.program typed
 
 testPrg es = do
-  case runParser P.program "test" es
-    of Left e -> putStrLn e
-       Right p ->
-         case L.program (entailProgram p) of
-           Left e -> putStrLn e
-           Right ss -> putStrLn $ showSDocUnsafe $ ppLlvmModule $ ss
+  case makePrg es of
+    Left e -> putStrLn e
+    Right ss -> putStrLn $ showSDocUnsafe $ ppLlvmModule $ ss

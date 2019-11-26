@@ -12,3 +12,7 @@ typeMatchError t1 t2 =
 undefinedVar :: Id -> String
 undefinedVar i =
   "wats thz little boi " <> emph (iName i) <> " uwu"
+
+noReturn :: String
+noReturn =
+  "Som sneaky [B]oi can escape hier ;---; I wanna you " <> emph ("return") <> " here plz I lov u"

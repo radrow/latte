@@ -49,23 +49,23 @@ deriving instance Show (Expr n)
 type E = Expr 0
 
 
-data Stmt e
-  = SAssg Ann Id e
-  | SDecl Ann Type (NonEmpty (Id, Maybe e))
+data Stmt
+  = SAssg Ann Id E
+  | SDecl Ann Type (NonEmpty (Id, Maybe E))
   | SIncr Ann Id
   | SDecr Ann Id
-  | SRet Ann e
+  | SRet Ann E
   | SVRet Ann
-  | SCond Ann e (Stmt e)
-  | SCondElse Ann e (Stmt e) (Stmt e)
-  | SWhile Ann e (Stmt e)
-  | SExp Ann e
-  | SBlock Ann [Stmt e]
+  | SCond Ann E Stmt
+  | SCondElse Ann E Stmt Stmt
+  | SWhile Ann E Stmt
+  | SExp Ann E
+  | SBlock Ann [Stmt]
   | SEmpty Ann
   deriving (Show)
 
 
-data TopDef = FunDef Ann Type Id [Arg] (Stmt E)
+data TopDef = FunDef Ann Type Id [Arg] Stmt
   deriving (Show)
 
 
@@ -73,7 +73,7 @@ newtype Program = Program [TopDef]
   deriving (Show)
 
 
-instance HasAnn (Stmt e) where
+instance HasAnn Stmt where
   getAnn = \case
     SAssg a _ _ -> a
     SDecl a _ _ -> a

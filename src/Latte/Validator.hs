@@ -5,11 +5,11 @@ module Latte.Validator where
 import Latte.Types.AST
 import Latte.Types.Latte
 import qualified Latte.Types.Syntax as S
-import Latte.Types.Syntax(Stmt(..))
 import Latte.Error
 
 import Data.Functor
-import Data.Map as M
+import qualified Data.Map as M
+import Data.Map(Map)
 import qualified Data.List.NonEmpty as NE
 import Control.Applicative
 import Control.Monad.Except
@@ -24,7 +24,7 @@ type LangError = [String]
 -- type Validator =
 --   StateT ValidatorState (ReaderT ValidatorEnv (Cont ValidatorState))
 type Validator =
-  ExceptT String (StateT ValidatorState (Reader ValidatorEnv))
+  ExceptT String (Reader ValidatorEnv)
 
 type VarEnv = Map Id Type
 type FunEnv = Map Id (Type, [Type])
@@ -38,13 +38,13 @@ data ValidatorEnv = ValidatorEnv
   -- , _veTopDefCont  :: forall a. Validator a
   }
 
-data ValidatorState = ValidatorState
-  { _vsErrors      :: [String]
-  }
+-- data ValidatorState = ValidatorState
+--   { _vsErrors      :: [String]
+--   }
 
 
 makeLenses ''ValidatorEnv
-makeLenses ''ValidatorState
+-- makeLenses ''ValidatorState
 
 
 withAnn :: HasAnn a => (a -> Validator b) -> a -> Validator b
@@ -130,12 +130,9 @@ retType :: Validator Type
 retType = maybe (error "fun env not in a funtion") id <$>
   view veRetType
 
-sameEnv :: Stmt (Expr Type) -> Validator (Stmt (Expr Type), VarEnv)
-sameEnv s = (,) s <$> view veDefinedVars
-
-tcStmt :: Stmt (Expr ()) -> Validator (Stmt (Expr Type), VarEnv)
+tcStmt :: Stmt (Expr ()) -> Validator (Stmt (Expr Type))
 tcStmt = \case
-  SDecl ann t decls -> do
+  SDecl ann t decls k -> do
     newDecls <- forM decls $ \(i, me) -> do
       mte <- forM me $ \e -> do
         te <- tcExpr e
@@ -144,57 +141,88 @@ tcStmt = \case
       pure (i, mte)
     let envExtension = M.fromList $ zip (NE.toList $ fmap fst decls) (repeat t)
     newEnv <- M.union envExtension <$> view veDefinedVars
-    pure (SDecl ann t newDecls, newEnv)
-  SAssg ann v e -> do
+    SDecl ann t newDecls <$> local (set veDefinedVars newEnv) (tcStmt k)
+  SAssg ann v e k -> do
     et <- tcExpr e
     vt <- tcVar v
     assertType vt et
-    sameEnv $ SAssg ann v et
-  SIncr ann v -> do
+    SAssg ann v et <$> tcStmt k
+  SIncr ann v k -> do
     vt <- tcVar v
     matchTypes TInt vt
-    sameEnv $ SIncr ann v
-  SDecr ann v -> do
+    SIncr ann v <$> tcStmt k
+  SDecr ann v k -> do
     vt <- tcVar v
     matchTypes TInt vt
-    sameEnv $ SDecr ann v
-  SCond ann c t -> do
+    SDecr ann v <$> tcStmt k
+  SCond ann c t k -> do
     ct <- tcExpr c
     assertType TBool ct
-    (tt, _) <- tcStmt t
-    sameEnv $ SCond ann ct tt
-  SCondElse ann c t e -> do
+    tt <- tcStmt t
+    SCond ann ct tt <$> tcStmt k
+  SCondElse ann c t e k -> do
     ct <- tcExpr c
     assertType TBool ct
-    (tt, _) <- tcStmt t
-    (et, _) <- tcStmt e
-    sameEnv $ SCondElse ann ct tt et
-  SWhile ann c b -> do
+    tt <- tcStmt t
+    et <- tcStmt e
+    SCondElse ann ct tt et <$> tcStmt k
+  SWhile ann c b k -> do
     ct <- tcExpr c
     assertType TBool ct
-    (bt, _) <- tcStmt b
-    sameEnv $ SCond ann ct bt
-  SExp ann e -> do
+    bt <- tcStmt b
+    SCond ann ct bt <$> tcStmt k
+  SExp ann e k -> do
     et <- tcExpr e
-    sameEnv $ SExp ann et
+    SExp ann et <$> tcStmt k
   SRet ann e -> do
     et <- tcExpr e
     rt <- retType
     assertType rt et
-    sameEnv $ SRet ann et
+    pure $ SRet ann et
   SVRet ann -> do
     rt <- retType
     matchTypes rt TVoid
-    sameEnv $ SVRet ann
-  SBlock ann stmts -> do
-    env <- view veDefinedVars
-    let step :: (Stmt (Expr Type) -> Stmt (Expr Type), VarEnv) ->
-                (Stmt (Expr ())) ->
-                (Stmt (Expr Type) -> Stmt (Expr Type), VarEnv)
-        step (prevCont, prevEnv) stmt = do
-          (stmtt, newEnv) <-
-            local (over veDefinedVars (const prevEnv)) (tcStmt stmt)
-          pure (prevCont . (stmtt:), newEnv)
-    (stmtstCont, newEnv) <- foldM step (id, env) stmts
-    pure (SBlock ann (stmtstCont []), newEnv)
-  SEmpty ann -> sameEnv $ SEmpty ann
+    pure $ SVRet ann
+  SBlock ann b k -> do
+    bt <- tcStmt b
+    kt <- tcStmt k
+    pure $ SBlock ann bt kt
+  SEmpty -> pure SEmpty
+
+
+isReturning :: Stmt a -> Bool
+isReturning = \case
+  SDecl ann t decls k -> isReturning k
+  SAssg ann v e k -> isReturning k
+  SIncr ann v k -> isReturning k
+  SDecr ann v k -> isReturning k
+  SCond ann c t k -> isReturning k
+  SCondElse ann c t e k ->
+    (isReturning t && isReturning e) || isReturning k
+  SWhile ann c b k -> isReturning k
+  SExp ann e k -> isReturning k
+  SRet ann e -> True
+  SVRet ann -> True
+  SBlock ann b k ->
+    isReturning b || isReturning k
+  SEmpty -> False
+
+buildGlobalEnv :: [TopDef ()] -> (VarEnv, FunEnv)
+buildGlobalEnv = foldl (\(pv, pf) d -> case d of
+                           FunDef _ rt fn args _ ->
+                             (pv, M.insert fn (rt, fmap (\(Arg _ t _) -> t) args) pf)
+                           ) (M.empty, M.empty)
+
+tcTopDef :: TopDef () -> Validator (TopDef Type)
+tcTopDef = \case
+  FunDef ann retType fname args body -> do
+    let addArgEnv = flip M.union (M.fromList $ fmap (\(Arg _ t n) -> (n, t)) args)
+    when (not $ isReturning body) $ throwError noReturn
+    tbody <- local (over veDefinedVars addArgEnv . set veRetType (Just retType)) (tcStmt body)
+    pure $ FunDef ann retType fname args tbody
+
+tcProgram :: Program () -> Either String (Program Type)
+tcProgram (Program defs) =
+  let (varEnv, funEnv) = buildGlobalEnv defs
+  in runReader (runExceptT (Program <$> mapM tcTopDef defs))
+     (ValidatorEnv varEnv funEnv (Ann "toplevel" 0 0) Nothing)

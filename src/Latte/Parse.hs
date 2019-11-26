@@ -16,7 +16,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import           Prelude hiding (lex, LT, GT, EQ)
 
 import Latte.Types.Syntax
-import Latte.Types.Latte
+import Latte.Types.Latte hiding (getAnn)
 
 
 type Parser = ParsecT Void Text Identity
@@ -222,7 +222,7 @@ semicolon :: Parser ()
 semicolon = void $ symbol ";"
 
 
-stmt :: Parser (Stmt (Expr 0))
+stmt :: Parser Stmt
 stmt = choice
   [ block
   , withAnnP SAssg <*> try (ident <* operator "=") <*> expr <* semicolon
@@ -239,7 +239,7 @@ stmt = choice
   ]
 
 
-block :: Parser (Stmt (Expr 0))
+block :: Parser Stmt
 block = withAnnP SBlock <*> brac (many stmt)
 
 

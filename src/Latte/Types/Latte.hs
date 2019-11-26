@@ -2,6 +2,7 @@ module Latte.Types.Latte
   ( Lit(..)
   , Id(..)
   , Ann(..)
+  , fakeAnn
   , Type(..)
   , Arg(..)
   , HasAnn(..)
@@ -18,6 +19,9 @@ newtype Id = Id {iName :: String}
 
 data Ann = Ann { file :: FilePath, line :: Int, column :: Int }
   deriving (Show)
+
+fakeAnn :: Ann
+fakeAnn = Ann "no_file" 0 0
 
 data Type = TInt | TString | TBool | TVoid
   deriving (Show, Eq)
