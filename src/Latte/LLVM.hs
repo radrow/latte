@@ -10,6 +10,7 @@ import Latte.Types.AST
 import qualified Latte.Types.Syntax as S
 import Latte.Error
 import Latte.Tardis
+import Latte.StdLib
 
 import Control.Applicative
 import Data.Functor
@@ -145,7 +146,7 @@ newLabel :: LabelType -> GlobalCompiler LlvmBlockId
 newLabel lt = do
   sup <- gets $ (^. supLabel) . (^. csSupply)
   modify (over csSupply (set supLabel $ sup + 1))
-  pure $ mkBuiltinUnique sup
+  pure $ getUnique $ fsLit $ labelTstr lt ++ show sup
 
 
 buildFunDecl :: Id -> Type -> [Type] -> LlvmFunctionDecl
@@ -193,7 +194,7 @@ expr = \case
           Constant
     pure $
       (argCode ++
-       [Assignment reg
+       [ (case t of TVoid -> Expr; _ -> Assignment reg)
          (Call (if tailrec then TailCall else StdCall) funVar argRegs [])]
       , reg)
   ENeg _ t ve -> do
@@ -327,7 +328,7 @@ topDef = \case
               []
               Nothing
               Nothing
-              [LlvmBlock (mkCoVarUnique 2137)
+              [LlvmBlock (getUnique $ fsLit (iName fname))
                 (argAssgCode ++ bodyCode)
               ]
     pure [def]
@@ -342,9 +343,9 @@ program (Program defs) =
              []
              []
              []
-             []
-             []
-             funs
+             stdglobals
+             stddecls
+             (stddefs ++ funs)
       -- (varEnv, funEnv) = buildGlobalEnv defs
   in runExcept (evalStateT buildProgram
           (CompilerState M.empty

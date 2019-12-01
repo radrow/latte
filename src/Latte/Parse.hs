@@ -202,12 +202,11 @@ expr4 = do
 
 
 expr5 :: Parser (Expr 5)
-expr5 = do
-  e <- expr6
-  choice [ operator "!" *> withAnnP (flip ENot e)
-         , operator "-" *> withAnnP (flip ENeg e)
-         , pure $ ECoe e
-         ]
+expr5 = choice
+  [ operator "!" *> withAnnP ENot <*> expr6
+  , operator "-" *> withAnnP ENeg <*> expr6
+  , ECoe <$> expr6
+  ]
 
 
 expr6 :: Parser (Expr 6)

@@ -6,6 +6,7 @@ import Latte.Types.AST
 import Latte.Types.Latte
 import qualified Latte.Types.Syntax as S
 import Latte.Error
+import Latte.StdLib
 
 import Data.Functor
 import qualified Data.Map as M
@@ -211,7 +212,7 @@ buildGlobalEnv :: [TopDef ()] -> (VarEnv, FunEnv)
 buildGlobalEnv = foldl (\(pv, pf) d -> case d of
                            FunDef _ rt fn args _ ->
                              (pv, M.insert fn (rt, fmap (\(Arg _ t _) -> t) args) pf)
-                           ) (M.empty, M.empty)
+                           ) (M.empty, stdfenv)
 
 tcTopDef :: TopDef () -> Validator (TopDef Type)
 tcTopDef = \case
