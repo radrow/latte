@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Latte.Parse where
 
-import           Data.Functor(void)
+import           Data.Functor(void, ($>))
 import           Control.Applicative        (liftA2)
 import           Control.Applicative.Combinators.NonEmpty(sepBy1)
 import           Control.Monad
@@ -162,46 +162,52 @@ expr = expr0
 
 
 expr0 :: Parser (Expr 0)
-expr0 = choice
-  [ withAnnP EOr <*> (try $ expr1 <* operator "||") <*> expr0
-  , ECoe <$> expr1
-  ]
+expr0 = do
+  e <- expr1
+  choice [ withAnnP EOr <*> (operator "||" $> e) <*> expr0
+         , pure $ ECoe e
+         ]
 
 
 expr1 :: Parser (Expr 1)
-expr1 = choice
-  [ withAnnP EAnd <*> (try $ expr2 <* operator "&&") <*> expr1
-  , ECoe <$> expr2
-  ]
+expr1 = do
+  e <- expr2
+  choice [ withAnnP EAnd <*> (operator "&&" $> e) <*> expr1
+         , pure $ ECoe e
+         ]
 
 
 expr2 :: Parser (Expr 2)
-expr2 = choice
-  [ try $ (ECoe <$> expr3) >>= infixL (flip ERelOp <$> relOp) expr3
-  , ECoe <$> expr3
-  ]
+expr2 = do
+  e <- ECoe <$> expr3
+  choice [ try $ (pure e) >>= infixL (flip ERelOp <$> relOp) expr3
+         , pure e
+         ]
 
 
 expr3 :: Parser (Expr 3)
-expr3 = choice
-  [ try $ (ECoe <$> expr4) >>= infixL (flip EAddOp <$> addOp) expr4
-  , ECoe <$> expr4
-  ]
+expr3 = do
+  e <- ECoe <$> expr4
+  choice [ try $ (pure e) >>= infixL (flip EAddOp <$> addOp) expr4
+         , pure e
+         ]
 
 
 expr4 :: Parser (Expr 4)
-expr4 = choice
-  [ try $ (ECoe <$> expr5) >>= infixL (flip EMulOp <$> mulOp) expr5
-  , ECoe <$> expr5
-  ]
+expr4 = do
+  e <- ECoe <$> expr5
+  choice [ try $ (pure e) >>= infixL (flip EMulOp <$> mulOp) expr5
+         , pure e
+         ]
 
 
 expr5 :: Parser (Expr 5)
-expr5 = choice
-  [ operator "!" *> withAnn (flip ENot <$> expr6)
-  , operator "-" *> withAnn (flip ENeg <$> expr6)
-  , ECoe <$> expr6
-  ]
+expr5 = do
+  e <- expr6
+  choice [ operator "!" *> withAnnP (flip ENot e)
+         , operator "-" *> withAnnP (flip ENeg e)
+         , pure $ ECoe e
+         ]
 
 
 expr6 :: Parser (Expr 6)
