@@ -28,7 +28,7 @@ import Control.Lens hiding (op)
 
 
 data LabelType = LABELIFCONT | LABELIFELSE | LABELIFTHEN | LABELWHILEBACK | LABELWHILECONT | LABELWHILEBODY
-data RegType = REGEXPR | REGBUF | REGLOAD Id | REGARG Id | REGLOCAL Id | REGGLOBAL Id
+data RegType = REGEXPR | REGBUF | REGLOAD Id | REGARG Id | REGLOCAL Id | REGGLOBAL Id | REGSTRING
 
 labelTstr :: LabelType -> String
 labelTstr = \case
@@ -48,6 +48,7 @@ regTstr = \case
   REGARG i -> "arg_" ++ iName i
   REGLOCAL i -> "local_" ++ iName i
   REGGLOBAL i -> "global_" ++ iName i
+  REGSTRING -> "str"
 
 
 data Supply = Supply
@@ -73,9 +74,10 @@ makeLenses ''LocalEnv
 
 
 data CompilerState = CompilerState
-  { _csVarEnv :: VarEnv
-  , _csSupply :: Supply
-  , _csStrs   :: Map String LMString
+  { _csVarEnv  :: VarEnv
+  , _csSupply  :: Supply
+  , _csStrs    :: Map String LMString
+  , _csStrings :: [LMGlobal]
   }
 makeLenses ''CompilerState
 
@@ -84,21 +86,59 @@ type GlobalCompiler = StateT CompilerState (Except String)
 type LocalCompiler = ReaderT LocalEnv GlobalCompiler
 
 
-buildOp :: Op -> LlvmVar -> LlvmVar -> LlvmExpression
-buildOp = \case
-  Op (S.LT _)    -> Compare LM_CMP_Slt
-  Op (S.LEQ _)   -> Compare LM_CMP_Sle
-  Op (S.EQ _)    -> Compare LM_CMP_Eq
-  Op (S.NEQ _)   -> Compare LM_CMP_Ne
-  Op (S.GEQ _)   -> Compare LM_CMP_Sge
-  Op (S.GT _)    -> Compare LM_CMP_Sgt
-  Op (S.Plus _)  -> LlvmOp LM_MO_Add
-  Op (S.Minus _) -> LlvmOp LM_MO_Sub
-  Op (S.Mult _)  -> LlvmOp LM_MO_Mul
-  Op (S.Div _)   -> LlvmOp LM_MO_SDiv
-  Op (S.Mod _)   -> LlvmOp LM_MO_SRem
-  Op (S.Or _)    -> LlvmOp LM_MO_Or
-  Op (S.And _)   -> LlvmOp LM_MO_And
+buildOp :: Type -> Op -> LlvmVar -> LlvmVar -> LocalCompiler ([LlvmStatement], LlvmVar)
+buildOp t o v1 v2 = do
+  outReg <- lift $ newTypedReg REGEXPR t
+  case o of
+    Op (S.LT _)    -> pure ([Assignment outReg (Compare LM_CMP_Slt v1 v2)], outReg)
+    Op (S.LEQ _)   -> pure ([Assignment outReg (Compare LM_CMP_Sle v1 v2)], outReg)
+    Op (S.EQ _)    -> pure ([Assignment outReg (Compare LM_CMP_Eq v1 v2)], outReg)
+    Op (S.NEQ _)   -> pure ([Assignment outReg (Compare LM_CMP_Ne v1 v2)], outReg)
+    Op (S.GEQ _)   -> pure ([Assignment outReg (Compare LM_CMP_Sge v1 v2)], outReg)
+    Op (S.GT _)    -> pure ([Assignment outReg (Compare LM_CMP_Sgt v1 v2)], outReg)
+    Op (S.Plus _)  -> case t of
+      TInt -> pure ([Assignment outReg (LlvmOp LM_MO_Add v1 v2)], outReg)
+      TString -> do
+        s1 <-  lift $ newTypedReg REGEXPR TString
+        s2 <-  lift $ newTypedReg REGEXPR TString
+        size1 <- lift $ newTypedReg REGEXPR TInt
+        size2 <- lift $ newTypedReg REGEXPR TInt
+        sumSize <- lift $ newTypedReg REGEXPR TInt
+        outSize <- lift $ newTypedReg REGEXPR TInt
+        outReg' <- lift $ newTypedReg REGEXPR t
+        outReg'' <- lift $ newTypedReg REGEXPR t
+        pure
+          ( [ Assignment size1 $
+              Call StdCall (LMGlobalVar "strlen"
+                             (LMFunction strlenDecl) External Nothing Nothing Constant
+                           ) [v1] []
+            , Assignment size2 $
+              Call StdCall (LMGlobalVar "strlen"
+                             (LMFunction strlenDecl) External Nothing Nothing Constant
+                           ) [v2] []
+            , Assignment sumSize $ LlvmOp LM_MO_Add size1 size2
+            , Assignment outSize $ LlvmOp LM_MO_Add sumSize (LMLitVar $ LMIntLit 1 i32)
+            , Assignment outReg $
+                 Call StdCall (LMGlobalVar "calloc"
+                               (LMFunction callocDecl) External Nothing Nothing Constant
+                              ) [LMLitVar $ LMIntLit 1 i32, outSize] []
+            , Assignment outReg' $
+                 Call StdCall (LMGlobalVar "strcat"
+                               (LMFunction strcatDecl) External Nothing Nothing Constant
+                              ) [outReg, v1] []
+            , Assignment outReg'' $
+              Call StdCall (LMGlobalVar "strcat"
+                             (LMFunction strcatDecl) External Nothing Nothing Constant
+                           ) [outReg', v2] []
+            ]
+          , outReg''
+          )
+    Op (S.Minus _) -> pure ([Assignment outReg (LlvmOp LM_MO_Sub v1 v2)], outReg)
+    Op (S.Mult _)  -> pure ([Assignment outReg (LlvmOp LM_MO_Mul v1 v2)], outReg)
+    Op (S.Div _)   -> pure ([Assignment outReg (LlvmOp LM_MO_SDiv v1 v2)], outReg)
+    Op (S.Mod _)   -> pure ([Assignment outReg (LlvmOp LM_MO_SRem v1 v2)], outReg)
+    Op (S.Or _)    -> pure ([Assignment outReg (LlvmOp LM_MO_Or v1 v2)], outReg)
+    Op (S.And _)   -> pure ([Assignment outReg (LlvmOp LM_MO_And v1 v2)], outReg)
 
 
 buildType :: Type -> LlvmType
@@ -149,6 +189,27 @@ newLabel lt = do
   pure $ getUnique $ fsLit $ labelTstr lt ++ show sup
 
 
+newString :: String -> LocalCompiler LlvmVar
+newString s = do
+  sup <- gets $ (^. supStr) . (^. csSupply)
+  modify (over csSupply (set supStr $ sup + 1))
+  fname <- view lenvFunName
+  let len = length s + 1
+      glob = LMGlobal
+        { getGlobalVar = LMGlobalVar (fsLit $ "str_" ++ iName fname ++ "_" ++ show sup)
+                         (LMPointer (LMArray len i8))
+                         Private
+                         Nothing
+                         (Just 1)
+                         Constant
+        , getGlobalValue = Just $ LMStaticStr
+                           (fsLit s)
+                           (LMArray len i8)
+        }
+  modify $ over csStrings (glob:)
+  pure $ getGlobalVar glob
+
+
 buildFunDecl :: Id -> Type -> [Type] -> LlvmFunctionDecl
 buildFunDecl n t args = LlvmFunctionDecl
   (fsLit $ iName n)
@@ -173,7 +234,16 @@ expr = \case
   ELit _ t lit -> case lit of
     LInt i -> pure ([], LMLitVar $ LMIntLit i (buildType t))
     LBool b -> pure ([], LMLitVar $ LMIntLit (if b then 1 else 0) (buildType t))
-    LString _ -> error "Strings TODO"
+    LString s -> do
+      strReg <- lift $ newTypedReg REGSTRING TString
+      strVar <- newString s
+      pure ( [Assignment strReg
+              (GetElemPtr True strVar
+               [ LMLitVar $ LMIntLit 0 i64
+               , LMLitVar $ LMIntLit 0 i64
+               ])]
+           , strReg
+           )
   EVar _ t i -> do
     (loadcode, reg) <- loadVar t i
     pure (loadcode, reg)
@@ -208,8 +278,8 @@ expr = \case
   EOp _ t o l r -> do
     (codel, ll) <- expr l
     (coder, rr) <- expr r
-    reg <- lift $ newTypedReg REGEXPR t
-    return $ (codel ++ coder ++ [Assignment reg (buildOp o ll rr)], reg)
+    (codeo, res) <- buildOp t o ll rr
+    return $ (codel ++ coder ++ codeo, res)
 
 
 -- genCode :: ([LlvmStatement], Env -> Env) -> Compiler ([LlvmStatement], Env)
@@ -339,16 +409,17 @@ program :: Program Type -> Either String LlvmModule
 program (Program defs) =
   let buildProgram = do
         funs <- concat <$> traverse topDef defs
+        globs <- gets (^. csStrings)
         pure $ LlvmModule
              []
              []
              []
-             stdglobals
+             (stdglobals ++ globs)
              stddecls
              (stddefs ++ funs)
       -- (varEnv, funEnv) = buildGlobalEnv defs
   in runExcept (evalStateT buildProgram
           (CompilerState M.empty
             (Supply 0 0 0)
-            M.empty
+            M.empty []
           ))

@@ -22,8 +22,6 @@ import Control.Lens
 type LangError = [String]
 
 
--- type Validator =
---   StateT ValidatorState (ReaderT ValidatorEnv (Cont ValidatorState))
 type Validator =
   ExceptT String (Reader ValidatorEnv)
 
@@ -36,32 +34,14 @@ data ValidatorEnv = ValidatorEnv
   , _veDefinedFuns :: FunEnv
   , _veLoc         :: Ann
   , _veRetType     :: Maybe Type
-  -- , _veTopDefCont  :: forall a. Validator a
   }
-
--- data ValidatorState = ValidatorState
---   { _vsErrors      :: [String]
---   }
 
 
 makeLenses ''ValidatorEnv
--- makeLenses ''ValidatorState
 
 
 withAnn :: HasAnn a => (a -> Validator b) -> a -> Validator b
 withAnn con ob = local (set veLoc (getAnn ob)) (con ob)
-
-
--- withCont :: Validator (Maybe a) -> Validator (Maybe a)
--- withCont act = callCC (\k -> local (set veTopDefCont (k Nothing)) act)
-
-
--- abortTopDef :: Validator ()
--- abortTopDef = join $ asks (^. veTopDefCont)
-
-
--- pushError :: String -> Validator ()
--- pushError e = modify (over vsErrors (e:)) >> abortTopDef
 
 
 tcVar :: Id -> Validator Type

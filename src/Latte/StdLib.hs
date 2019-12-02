@@ -1,4 +1,6 @@
-module Latte.StdLib(stdglobals, stddecls, stddefs, stdfenv) where
+{-# LANGUAGE OverloadedStrings #-}
+
+module Latte.StdLib(stdglobals, stddecls, stddefs, stdfenv, strlenDecl, strcatDecl, callocDecl) where
 
 import Latte.Types.Latte
 
@@ -7,6 +9,11 @@ import FastString
 import Unique
 
 import qualified Data.Map as M
+
+
+unique :: FastString -> Unique
+unique = getUnique
+
 
 printfDecl = LlvmFunctionDecl
   "printf"
@@ -35,6 +42,35 @@ exitDecl = LlvmFunctionDecl
   [(i32, [])]
   Nothing
 
+strlenDecl = LlvmFunctionDecl
+  "strlen"
+  External
+  CC_Ccc
+  i32
+  FixedArgs
+  [(LMPointer i8, [])]
+  Nothing
+
+
+strcatDecl = LlvmFunctionDecl
+  "strcat"
+  External
+  CC_Ccc
+  (LMPointer i8)
+  FixedArgs
+  [(LMPointer i8, []), (LMPointer i8, [])]
+  Nothing
+
+
+callocDecl = LlvmFunctionDecl
+  "calloc"
+  External
+  CC_Ccc
+  (LMPointer i8)
+  FixedArgs
+  [(i32, []), (i32, [])]
+  Nothing
+
 runtimeErrorStr = LMGlobal
   { getGlobalVar = LMGlobalVar "error_msg"
                    (LMPointer (LMArray 15 i8))
@@ -43,7 +79,7 @@ runtimeErrorStr = LMGlobal
                    (Just 1)
                    Constant
   , getGlobalValue = Just $ LMStaticStr
-                     (fsLit "runtime error\\0A")
+                     "runtime error\\0A"
                      (LMArray 15 i8)
   }
 
@@ -55,7 +91,7 @@ printIntStr = LMGlobal
                    (Just 1)
                    Constant
   , getGlobalValue = Just $ LMStaticStr
-                     (fsLit "%d\\0A")
+                     "%d\\0A"
                      (LMArray 4 i8)
   }
 
@@ -67,7 +103,7 @@ readIntStr = LMGlobal
                    (Just 1)
                    Constant
   , getGlobalValue = Just $ LMStaticStr
-                     (fsLit "%d")
+                     "%d"
                      (LMArray 3 i8)
   }
 
@@ -86,25 +122,25 @@ runtimeError = LlvmFunction
   []
   Nothing
   Nothing
-  [LlvmBlock (getUnique $ fsLit "runtimeError_enter")
-    [ Assignment (LMNLocalVar (fsLit "runtimeErrorPrintfStr") (LMPointer i8))
+  [LlvmBlock (unique "runtimeError_enter")
+    [ Assignment (LMNLocalVar "runtimeErrorPrintfStr" (LMPointer i8))
       (GetElemPtr True (getGlobalVar runtimeErrorStr)
        [ LMLitVar $ LMIntLit 0 i64
        , LMLitVar $ LMIntLit 0 i64
        ])
-    , Assignment (LMNLocalVar (fsLit "runtimeErrorPrintfRet") i32)
-      ( Call StdCall (LMGlobalVar (fsLit "printf")
+    , Assignment (LMNLocalVar "runtimeErrorPrintfRet" i32)
+      ( Call StdCall (LMGlobalVar "printf"
                        (LMFunction printfDecl)
                        Internal
                        Nothing
                        Nothing
                        Constant
                      )
-        [LMNLocalVar (fsLit "runtimeErrorPrintfStr") (LMPointer i8)]
+        [LMNLocalVar "runtimeErrorPrintfStr" (LMPointer i8)]
         []
       )
     , Expr
-      ( Call StdCall (LMGlobalVar (fsLit "exit")
+      ( Call StdCall (LMGlobalVar "exit"
                        (LMFunction exitDecl)
                        Internal
                        Nothing
@@ -130,26 +166,26 @@ printIntDecl = LlvmFunctionDecl
 
 printInt = LlvmFunction
   printIntDecl
-  [fsLit "x"]
+  ["x"]
   []
   Nothing
   Nothing
-  [LlvmBlock (getUnique $ fsLit "printInt_enter")
-    [ Assignment (LMNLocalVar (fsLit "printIntPrintfStr") (LMPointer i8))
+  [LlvmBlock (unique "printInt_enter")
+    [ Assignment (LMNLocalVar "printIntPrintfStr" (LMPointer i8))
       (GetElemPtr True (getGlobalVar printIntStr)
        [ LMLitVar $ LMIntLit 0 i64
        , LMLitVar $ LMIntLit 0 i64
        ])
-    , Assignment (LMNLocalVar (fsLit "printIntPrintfRet") i32)
-      ( Call StdCall (LMGlobalVar (fsLit "printf")
+    , Assignment (LMNLocalVar "printIntPrintfRet" i32)
+      ( Call StdCall (LMGlobalVar "printf"
                        (LMFunction printfDecl)
                        Internal
                        Nothing
                        Nothing
                        Constant
                      )
-        [ LMNLocalVar (fsLit "printIntPrintfStr") (LMPointer i8)
-        , LMNLocalVar (fsLit "x") i32
+        [ LMNLocalVar "printIntPrintfStr" (LMPointer i8)
+        , LMNLocalVar "x" i32
         ]
         []
       )
@@ -173,39 +209,75 @@ readInt = LlvmFunction
   []
   Nothing
   Nothing
-  [LlvmBlock (getUnique $ fsLit "readInt_enter")
-    [ Assignment (LMNLocalVar (fsLit "readIntScanfStr") (LMPointer i8))
+  [LlvmBlock (unique "readInt_enter")
+    [ Assignment (LMNLocalVar "readIntScanfStr" (LMPointer i8))
       (GetElemPtr True (getGlobalVar readIntStr)
        [ LMLitVar $ LMIntLit 0 i64
        , LMLitVar $ LMIntLit 0 i64
        ])
-    , Assignment (LMNLocalVar (fsLit "readIntScanfBuf") (LMPointer i32))
+    , Assignment (LMNLocalVar "readIntScanfBuf" (LMPointer i32))
       (Alloca i32 1)
-    , Assignment (LMNLocalVar (fsLit "readIntScanfRet") i32)
-      ( Call StdCall (LMGlobalVar (fsLit "scanf")
+    , Assignment (LMNLocalVar "readIntScanfRet" i32)
+      ( Call StdCall (LMGlobalVar "scanf"
                        (LMFunction scanfDecl)
                        Internal
                        Nothing
                        Nothing
                        Constant
                      )
-        [ LMNLocalVar (fsLit "readIntScanfStr") (LMPointer i8)
-        , LMNLocalVar (fsLit "readIntScanfBuf") (LMPointer i32)
+        [ LMNLocalVar "readIntScanfStr" (LMPointer i8)
+        , LMNLocalVar "readIntScanfBuf" (LMPointer i32)
         ]
         []
       )
-    , Assignment (LMNLocalVar (fsLit "readIntScanfRes") i32)
-      (Load (LMNLocalVar (fsLit "readIntScanfBuf") (LMPointer i32)))
-    , Return (Just $ LMNLocalVar (fsLit "readIntScanfRes") i32)
+    , Assignment (LMNLocalVar "readIntScanfRes" i32)
+      (Load (LMNLocalVar "readIntScanfBuf" (LMPointer i32)))
+    , Return (Just $ LMNLocalVar "readIntScanfRes" i32)
     ]
   ]
 
+
+printStringDecl = LlvmFunctionDecl
+  "printString"
+  Internal
+  CC_Ccc
+  LMVoid
+  FixedArgs
+  [(LMPointer i8, [])]
+  Nothing
+
+printString = LlvmFunction
+  printStringDecl
+  ["s"]
+  []
+  Nothing
+  Nothing
+  [LlvmBlock (unique "printString_enter")
+    [ Assignment (LMNLocalVar "printStringPrintfRet" i32)
+      ( Call StdCall (LMGlobalVar "printf"
+                       (LMFunction printfDecl)
+                       Internal
+                       Nothing
+                       Nothing
+                       Constant
+                     )
+        [ LMNLocalVar "s" (LMPointer i8)
+        ]
+        []
+      )
+    , Return Nothing
+    ]
+  ]
+
+
+
 stdglobals = [runtimeErrorStr, printIntStr, readIntStr]
-stddecls = [printfDecl, exitDecl, scanfDecl]
-stddefs = [runtimeError, printInt, readInt]
+stddecls = [printfDecl, exitDecl, scanfDecl, strlenDecl, strcatDecl, callocDecl]
+stddefs = [runtimeError, printInt, readInt, printString]
 
 stdfenv = M.fromList
   [ (Id "error", (TVoid, []))
   , (Id "printInt", (TVoid, [TInt]))
   , (Id "readInt", (TInt, []))
+  , (Id "printString", (TVoid, [TString]))
   ]
