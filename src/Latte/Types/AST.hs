@@ -37,7 +37,10 @@ data Stmt e
   | SEmpty
   deriving (Show)
 
-data TopDef p = FunDef Ann Type Id [Arg] (Stmt (Expr p))
+data TopDef p
+  = TopFun Ann Type Id [Arg] (Stmt (Expr p))
+  | TopClass Ann Id [ClassMember]
+  deriving (Show)
 
 newtype Program p = Program [TopDef p]
 
@@ -76,9 +79,10 @@ entailStmt s =
       composeSts fs = foldr (.) id fs $ SEmpty
   in entailSingle s SEmpty
 
-entailFunDef :: S.TopDef -> TopDef ()
-entailFunDef (S.FunDef ann t name args body) =
-  FunDef ann t name args (entailStmt body)
+entailTopDef :: S.TopDef -> TopDef ()
+entailTopDef = \case
+  S.TopFun ann t name args body ->
+    TopFun ann t name args (entailStmt body)
 
 entailProgram :: S.Program -> Program ()
 entailProgram (S.Program funs) = Program (map entailFunDef funs)

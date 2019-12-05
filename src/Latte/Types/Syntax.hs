@@ -1,7 +1,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 module Latte.Types.Syntax
   ( Op(..), OpType(..), Expr(..), Stmt(..)
-  , TopDef(..), Program(..)
+  , TopDef(..), Program(..), ClassMember(..), ClassMemberPlace(..), ClassMemberAccess(..)
   ) where
 
 import Data.List.NonEmpty(NonEmpty)
@@ -65,9 +65,24 @@ data Stmt
   deriving (Show)
 
 
-data TopDef = FunDef Ann Type Id [Arg] Stmt
+data TopDef
+  = TopFun Ann Type Id [Arg] Stmt
+  | TopClass Ann Id [ClassMember]
   deriving (Show)
 
+
+data ClassMember
+  = Method Ann ClassMemberAccess ClassMemberPlace Type Id [Arg] Stmt
+  | AbstractMethod Ann ClassMemberAccess ClassMemberPlace Type Id [Arg]
+  | Field Ann ClassMemberAccess ClassMemberPlace Type (NonEmpty (Id, Maybe E))
+  | Constructor Ann ClassMemberAccess (Maybe Id) [Arg] Stmt
+  deriving (Show)
+
+
+data ClassMemberPlace = Dynamic | Static
+  deriving (Show)
+data ClassMemberAccess = Private | Public
+  deriving (Show)
 
 newtype Program = Program [TopDef]
   deriving (Show)

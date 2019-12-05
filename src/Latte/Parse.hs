@@ -262,9 +262,32 @@ arg = withAnnP Arg <*> type_ <*> ident
 
 
 topDef :: Parser TopDef
-topDef =
-  (withAnnP FunDef) <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> block
+topDef = choice
+  [ withAnnP TopClass <*> try (word "class" *> ident) <*> many classMember
+  , withAnnP TopFun <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> block
+  ]
 
+
+classMember :: Parser ClassMember
+classMember = choice
+  [ withAnnP AbstractMethod <*> (word "abstract" *> classMemberAccess) <*> classMemberPlace
+    <*> type_ <*> ident <*> paren (sepBy arg (symbol ","))
+  , withAnnP Method <*> classMemberAccess <*> classMemberPlace
+    <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> stmt
+  , withAnnP Constructor <*> (word "constructor" *> classMemberAccess)
+    <*> option ident <*> paren (sepBy arg (symbol ",")) stmt
+  , withAnnP Field <*> type_ <*> sepBy1 decl (symbol ",") <* semicolon
+  ]
+
+
+classMemberAccess :: Parser ClassMemberAccess
+classMemberAccess =
+  word "public" $> Public <|> pure Private
+
+
+classMemberPlace :: Parser ClassMemberPlace
+classMemberPlace =
+  word "static" $> Static <|> pure Dynamic
 
 program :: Parser Program
 program = Program <$> many topDef
