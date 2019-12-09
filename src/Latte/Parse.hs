@@ -16,12 +16,13 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import           Prelude hiding (lex, LT, GT, EQ)
 
 import Latte.Types.Syntax
+import Latte.Types.AST
 import Latte.Types.Latte hiding (getAnn)
 
 
 type Parser = ParsecT Void Text Identity
-runParser :: Parser a -> FilePath -> Text -> Either String a
-runParser p filename inp = first
+runLatteParser :: Parser a -> FilePath -> Text -> Either String a
+runLatteParser p filename inp = first
   (concat . fmap parseErrorPretty . bundleErrors)
   (parse (skip *> p <* eof) filename inp)
 
@@ -52,6 +53,7 @@ keywords =
   , "else"
   , "int", "string", "bool", "void"
   , "true", "false"
+  , "class"
   ]
 
 
@@ -76,7 +78,7 @@ signed = lex $ L.decimal
 
 operator :: Text -> Parser ()
 operator o =
-  lex $ try $ string o *> notFollowedBy (oneOf ("=+-/*%\\&|^<>" :: String))
+  lex $ try $ string o *> notFollowedBy (oneOf ("=+-/*%\\&.|^<>" :: String))
 
 
 symbol :: Text -> Parser Text
@@ -112,9 +114,9 @@ escapedChar = do
     bad  -> fail $ "Cannot escape char '" <> [bad] <> "'"
 
 
-infixL :: Parser (Ann -> a -> b -> a) -> Parser b -> a -> Parser a
+infixL :: Parser (a -> b -> a) -> Parser b -> a -> Parser a
 infixL op p x = do
-  f <- withAnn op
+  f <- op
   y <- p
   let r = f x y
   infixL op p r <|> return r
@@ -156,99 +158,116 @@ mulOp = choice
   , withAnn $ Mod  <$ operator "%"
   ]
 
+expr :: Parser (Expr 'Untyped)
+expr = entailExpr <$> expr0
 
-expr :: Parser (Expr 0)
-expr = expr0
+rawExpr :: Parser (RawExpr 0)
+rawExpr = expr0
 
-
-expr0 :: Parser (Expr 0)
+expr0 :: Parser (RawExpr 0)
 expr0 = do
   e <- expr1
-  choice [ withAnnP EOr <*> (operator "||" $> e) <*> expr0
-         , pure $ ECoe e
+  choice [ withAnnP REOr <*> (operator "||" $> e) <*> expr0
+         , pure $ RECoe e
          ]
 
 
-expr1 :: Parser (Expr 1)
+expr1 :: Parser (RawExpr 1)
 expr1 = do
   e <- expr2
-  choice [ withAnnP EAnd <*> (operator "&&" $> e) <*> expr1
-         , pure $ ECoe e
+  choice [ withAnnP REAnd <*> (operator "&&" $> e) <*> expr1
+         , pure $ RECoe e
          ]
 
 
-expr2 :: Parser (Expr 2)
+expr2 :: Parser (RawExpr 2)
 expr2 = do
-  e <- ECoe <$> expr3
-  choice [ try $ (pure e) >>= infixL (flip ERelOp <$> relOp) expr3
+  e <- RECoe <$> expr3
+  choice [ try $ (pure e) >>= infixL (withAnn $ flip RERelOp <$> relOp) expr3
          , pure e
          ]
 
 
-expr3 :: Parser (Expr 3)
+expr3 :: Parser (RawExpr 3)
 expr3 = do
-  e <- ECoe <$> expr4
-  choice [ try $ (pure e) >>= infixL (flip EAddOp <$> addOp) expr4
+  e <- RECoe <$> expr4
+  choice [ try $ (pure e) >>= infixL (withAnn $ flip REAddOp <$> addOp) expr4
          , pure e
          ]
 
 
-expr4 :: Parser (Expr 4)
+expr4 :: Parser (RawExpr 4)
 expr4 = do
-  e <- ECoe <$> expr5
-  choice [ try $ (pure e) >>= infixL (flip EMulOp <$> mulOp) expr5
+  e <- RECoe <$> expr5
+  choice [ try $ (pure e) >>= infixL (withAnn $ flip REMulOp <$> mulOp) expr5
          , pure e
          ]
 
 
-expr5 :: Parser (Expr 5)
+expr5 :: Parser (RawExpr 5)
 expr5 = choice
-  [ operator "!" *> withAnnP ENot <*> expr6
-  , operator "-" *> withAnnP ENeg <*> expr6
-  , ECoe <$> expr6
+  [ operator "!" *> withAnnP RENot <*> expr6
+  , operator "-" *> withAnnP RENeg <*> expr6
+  , RECoe <$> expr6
   ]
 
 
-expr6 :: Parser (Expr 6)
-expr6 = choice
-  [ withAnnP EPar <*> paren expr0
-  , withAnnP ELit <*> lit
-  , try $ withAnnP EApp <*> ident <*> paren (sepBy expr0 (symbol ","))
-  , withAnnP EVar <*> ident
+expr6 :: Parser (RawExpr 6)
+expr6 = do
+  e <- RECoe <$> expr7
+  choice [ try $ (pure e) >>= infixL (withAnn $ operator "." $> REProj) ident
+         , pure e
+         ]
+
+
+expr7 :: Parser (RawExpr 7)
+expr7 = choice
+  [ withAnnP REPar <*> paren expr0
+  , withAnnP RELit <*> lit
+  , try $ withAnnP REApp <*> ident <*> paren (sepBy expr0 (symbol ","))
+  , withAnnP REVar <*> ident
   ]
 
 
-decl :: Parser (Id, Maybe (Expr 0))
-decl = liftA2 (,) (try $ ident <* operator "=") (Just <$> expr)
+rawDecl :: Parser (Id, Maybe (RawExpr 0))
+rawDecl = liftA2 (,) (try $ ident <* operator "=") (Just <$> rawExpr)
   <|> liftA2 (,) ident (pure Nothing)
+
+
+decl :: Parser (Id, Maybe (Expr 'Untyped))
+decl = fmap (fmap entailExpr) <$> rawDecl
 
 
 semicolon :: Parser ()
 semicolon = void $ symbol ";"
 
 
-stmt :: Parser Stmt
+stmt :: Parser RawStmt
 stmt = choice
   [ block
-  , withAnnP SAssg <*> try (ident <* operator "=") <*> expr <* semicolon
-  , withAnnP SDecl <*> type_ <*> sepBy1 decl (symbol ",") <* semicolon
-  , withAnnP SIncr <*> try (ident <* operator "++") <* semicolon
-  , withAnnP SDecr <*> try (ident <* operator "--") <* semicolon
-  , withAnnP SRet <*> (try $ word "return" *> expr) <* semicolon
-  , withAnn (SVRet <$ word "return") <* semicolon
-  , withAnnP (\a c t me -> case me of {Nothing -> SCond a c t; Just e -> SCondElse a c t e})
-    <*> (word "if" *> paren expr) <*> stmt <*> optional (word "else" *> stmt)
-  , withAnnP SWhile <*> (word "while" *> paren expr) <*> stmt
-  , withAnnP SExp <*> expr <* semicolon
-  , withAnn (pure SEmpty) <* semicolon
+  , withAnnP RSAssg <*> try (ident <* operator "=") <*> rawExpr <* semicolon
+  , withAnnP RSDecl <*> type_ <*> sepBy1 rawDecl (symbol ",") <* semicolon
+  , withAnnP RSIncr <*> try (ident <* operator "++") <* semicolon
+  , withAnnP RSDecr <*> try (ident <* operator "--") <* semicolon
+  , withAnnP RSRet <*> (try $ word "return" *> rawExpr) <* semicolon
+  , withAnn (RSVRet <$ word "return") <* semicolon
+  , withAnnP (\a c t me -> case me of {Nothing -> RSCond a c t; Just e -> RSCondElse a c t e})
+    <*> (word "if" *> paren rawExpr) <*> stmt <*> optional (word "else" *> stmt)
+  , withAnnP RSWhile <*> (word "while" *> paren rawExpr) <*> stmt
+  , withAnnP RSExp <*> rawExpr <* semicolon
+  , withAnn (pure RSEmpty) <* semicolon
   ]
 
 
-block :: Parser Stmt
-block = withAnnP SBlock <*> brac (many stmt)
+block :: Parser RawStmt
+block = withAnnP RSBlock <*> brac (many stmt)
 
 
-type_ :: Parser Type
+body :: Parser (Stmt 'Untyped)
+body = entailStmt <$> block
+
+
+type_ :: Parser (Type 'Untyped)
 type_ = choice
   [ TInt <$ word "int"
   , TBool <$ word "bool"
@@ -257,26 +276,28 @@ type_ = choice
   ]
 
 
-arg :: Parser Arg
+arg :: Parser (Arg 'Untyped)
 arg = withAnnP Arg <*> type_ <*> ident
 
 
-topDef :: Parser TopDef
+topDef :: Parser (TopDef 'Untyped)
 topDef = choice
-  [ withAnnP TopClass <*> try (word "class" *> ident) <*> many classMember
-  , withAnnP TopFun <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> block
+  [ withAnnP TopClass <*> try (word "class" *> ident) <*> (optional $ word "extends" *> ident)
+    <*> brac (many classMember)
+  , withAnnP TopFun <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> body
   ]
 
 
-classMember :: Parser ClassMember
+classMember :: Parser (ClassMember 'Untyped)
 classMember = choice
-  [ withAnnP AbstractMethod <*> (word "abstract" *> classMemberAccess) <*> classMemberPlace
-    <*> type_ <*> ident <*> paren (sepBy arg (symbol ","))
-  , withAnnP Method <*> classMemberAccess <*> classMemberPlace
-    <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> stmt
-  , withAnnP Constructor <*> (word "constructor" *> classMemberAccess)
-    <*> option ident <*> paren (sepBy arg (symbol ",")) stmt
-  , withAnnP Field <*> type_ <*> sepBy1 decl (symbol ",") <* semicolon
+  [-- withAnnP AbstractMethod <*> (word "abstract" *> classMemberAccess) <*> classMemberPlace
+   -- <*> type_ <*> ident <*> paren (sepBy arg (symbol ","))
+  -- , withAnnP Method <*> classMemberAccess <*> classMemberPlace
+  --   <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> stmt
+  -- , withAnnP Constructor <*> (word "constructor" *> classMemberAccess)
+  --   <*> option ident <*> paren (sepBy arg (symbol ",")) stmt
+   withAnnP Field <*> classMemberAccess <*> classMemberPlace <*> type_
+    <*> sepBy1 decl (symbol ",") <* semicolon
   ]
 
 
@@ -289,5 +310,5 @@ classMemberPlace :: Parser ClassMemberPlace
 classMemberPlace =
   word "static" $> Static <|> pure Dynamic
 
-program :: Parser Program
+program :: Parser (Program 'Untyped)
 program = Program <$> many topDef

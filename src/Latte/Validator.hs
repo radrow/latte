@@ -21,47 +21,76 @@ import Control.Lens
 
 type LangError = [String]
 
+type UType = Type 'Typed
 
 type Validator =
-  ExceptT String (Reader ValidatorEnv)
+  ReaderT ValidatorEnv (Except String)
 
-type VarEnv = Map Id Type
-type FunEnv = Map Id (Type, [Type])
+type VarEnv   = Map Id UType
+type FunEnv   = Map Id (UType, [UType])
+type ClassEnv = Map Id ClassEntry
+data ClassEntry = ClassEntry
+  { ceSuperClass :: Maybe Id
+  , ceFields :: VarEnv
+  , ceMethods :: FunEnv
+  }
 
 
 data ValidatorEnv = ValidatorEnv
   { _veDefinedVars :: VarEnv
   , _veDefinedFuns :: FunEnv
+  , _veClassEnv    :: ClassEnv
   , _veLoc         :: Ann
-  , _veRetType     :: Maybe Type
+  , _veRetType     :: Maybe UType
   }
 
-
 makeLenses ''ValidatorEnv
+
+getClassEntry :: Id -> Validator ClassEntry
+getClassEntry i = views veClassEnv (M.lookup i) >>= \case
+  Nothing -> throwError $ undefinedClass i
+  Just c -> pure c
 
 
 withAnn :: HasAnn a => (a -> Validator b) -> a -> Validator b
 withAnn con ob = local (set veLoc (getAnn ob)) (con ob)
 
 
-tcVar :: Id -> Validator Type
+tcVar :: Id -> Validator UType
 tcVar v = (M.lookup v) <$> view veDefinedVars >>= \case
   Nothing -> throwError $ undefinedVar v
   Just t -> pure t
 
-tcFun :: Id -> Validator (Type, [Type])
+tcFun :: Id -> Validator (UType, [UType])
 tcFun v = (M.lookup v) <$> view veDefinedFuns >>= \case
   Nothing -> throwError $ undefinedVar v
   Just t -> pure t
 
-matchTypes :: Type -> Type -> Validator ()
-matchTypes a b = if a == b then pure () else throwError $ typeMatchError a b
+matchTypes :: UType -> UType -> Validator ()
+matchTypes a b = case (a, b) of
+  (TInt, TInt) -> pure ()
+  (TVoid, TVoid) -> pure ()
+  (TBool, TBool) -> pure ()
+  (TString, TString) -> pure ()
+  (TObj o1, TObj o2) -> matchClass o1 o2
+  _ -> throwError $ typeMatchError a b
 
-assertType :: Type -> Expr Type -> Validator ()
-assertType expected typed =
-  matchTypes expected (getExprDec typed)
+matchClass :: Id -> Id -> Validator ()
+matchClass c1 c2 =
+  let search i1 i2 =
+        if i1 == i2 then pure True
+        else getClassEntry i2 >>= \ce -> case ceSuperClass ce of
+          Nothing -> pure False
+          Just i2' -> search i1 i2'
+  in search c1 c2 >>= \case
+    True -> pure ()
+    False -> throwError $ classMatchError c1 c2
 
-tcOp :: Op -> Type -> Type -> Validator Type
+assertType :: UType -> Expr 'Typed -> Validator ()
+assertType t e = matchTypes t (getExprDec e)
+
+
+tcOp :: AnyOp -> UType -> UType -> Validator UType
 tcOp o l r =
   let tc t = matchTypes t r >> matchTypes t l
   in case o of
@@ -80,7 +109,7 @@ tcOp o l r =
     Op (S.And _)   -> tc TBool $> TBool
 
 
-tcExpr :: Expr () -> Validator (Expr Type)
+tcExpr :: Expr 'Untyped -> Validator (Expr 'Typed)
 tcExpr = \case
   ELit ann () l -> case l of
     LInt i -> pure $ ELit ann TInt (LInt i)
@@ -107,22 +136,22 @@ tcExpr = \case
     tres <- tcOp o (getExprDec tl) (getExprDec tr)
     pure $ EOp ann tres o tl tr
 
-retType :: Validator Type
+retType :: Validator UType
 retType = maybe (error "fun env not in a funtion") id <$>
   view veRetType
 
-tcStmt :: Stmt (Expr ()) -> Validator (Stmt (Expr Type))
+tcStmt :: Stmt 'Untyped -> Validator (Stmt 'Typed)
 tcStmt = \case
   SDecl ann t decls k -> do
     newDecls <- forM decls $ \(i, me) -> do
       mte <- forM me $ \e -> do
         te <- tcExpr e
-        assertType t te
+        assertType (coerceType t) te
         pure te
       pure (i, mte)
-    let envExtension = M.fromList $ zip (NE.toList $ fmap fst decls) (repeat t)
+    let envExtension = M.fromList $ zip (NE.toList $ fmap fst decls) (repeat $ coerceType t)
     newEnv <- M.union envExtension <$> view veDefinedVars
-    SDecl ann t newDecls <$> local (set veDefinedVars newEnv) (tcStmt k)
+    SDecl ann (coerceType t) newDecls <$> local (set veDefinedVars newEnv) (tcStmt k)
   SAssg ann v e k -> do
     et <- tcExpr e
     vt <- tcVar v
@@ -188,21 +217,28 @@ isReturning = \case
     isReturning b || isReturning k
   SEmpty -> False
 
-buildGlobalEnv :: [TopDef ()] -> (VarEnv, FunEnv)
-buildGlobalEnv = foldl (\(pv, pf) d -> case d of
-                           FunDef _ rt fn args _ ->
-                             (pv, M.insert fn (rt, fmap (\(Arg _ t _) -> t) args) pf)
-                           ) (M.empty, stdfenv)
+buildInitialEnv :: [TopDef 'Untyped] -> Except String ValidatorEnv
+buildInitialEnv =
+  foldl (\prev d ->
+           case d of
+             TopFun _ rt fn args _ -> pure $
+               over veFunEnv (M.insert fn (coerceType rt, fmap (\(Arg _ t _) -> coerceType t) args)) prev
+             Class
+        ) (M.empty, stdfenv)
 
-tcTopDef :: TopDef () -> Validator (TopDef Type)
+tcArgs :: [Arg 'Untyped] -> [Arg 'Typed]
+tcArgs = fmap (\(Arg a t i) -> (Arg a (coerceType t) i))
+
+tcTopDef :: TopDef 'Untyped -> Validator (TopDef 'Typed)
 tcTopDef = \case
-  FunDef ann retType fname args body -> do
-    let addArgEnv = flip M.union (M.fromList $ fmap (\(Arg _ t n) -> (n, t)) args)
+  TopFun ann retType fname args body -> do
+    let addArgEnv = flip M.union
+          (M.fromList $ fmap (\(Arg _ t n) -> (n, coerceType t)) args)
     when (not $ isReturning body) $ throwError noReturn
-    tbody <- local (over veDefinedVars addArgEnv . set veRetType (Just retType)) (tcStmt body)
-    pure $ FunDef ann retType fname args tbody
+    tbody <- local (over veDefinedVars addArgEnv . set veRetType (Just $ coerceType retType)) (tcStmt body)
+    pure $ TopFun ann (coerceType retType) fname (tcArgs args) tbody
 
-tcProgram :: Program () -> Either String (Program Type)
+tcProgram :: Program 'Untyped -> Either String (Program 'Typed)
 tcProgram (Program defs) =
   let (varEnv, funEnv) = buildGlobalEnv defs
   in runReader (runExceptT (Program <$> mapM tcTopDef defs))

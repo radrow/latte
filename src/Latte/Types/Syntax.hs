@@ -1,12 +1,13 @@
 {-# LANGUAGE StandaloneDeriving #-}
 module Latte.Types.Syntax
-  ( Op(..), OpType(..), Expr(..), Stmt(..)
-  , TopDef(..), Program(..), ClassMember(..), ClassMemberPlace(..), ClassMemberAccess(..)
+  ( Op(..), OpType(..), RawExpr(..), RawStmt(..)
   ) where
 
 import Data.List.NonEmpty(NonEmpty)
 import GHC.TypeNats(Nat, type (+))
-import Latte.Types.Latte(Id, Ann, Lit, Type, Arg, HasAnn(getAnn))
+import Latte.Types.Latte( Id, Ann, Lit, Type, Arg, HasAnn(getAnn)
+                        , Stage(..)
+                        )
 
 
 data OpType = Rel | Add | Mul | Log
@@ -30,75 +31,39 @@ data Op (t :: OpType) where
 deriving instance Show (Op t)
 
 
-data Expr (l :: Nat) where
-  EOr    :: Ann -> Expr 1 -> Expr 0            -> Expr 0
-  EAnd   :: Ann -> Expr 2 -> Expr 1            -> Expr 1
-  ERelOp :: Ann -> Op 'Rel -> Expr 2 -> Expr 3 -> Expr 2
-  EAddOp :: Ann -> Op 'Add -> Expr 3 -> Expr 4 -> Expr 3
-  EMulOp :: Ann -> Op 'Mul -> Expr 4 -> Expr 5 -> Expr 4
-  ENot   :: Ann -> Expr 6                      -> Expr 5
-  ENeg   :: Ann -> Expr 6                      -> Expr 5
-  ELit   :: Ann -> Lit                         -> Expr 6
-  EApp   :: Ann -> Id -> [Expr 0]              -> Expr 6
-  EVar   :: Ann -> Id                          -> Expr 6
-  EPar   :: Ann -> Expr 0                      -> Expr 6
-  ECoe   ::        Expr (n + 1)                -> Expr n
-deriving instance Show (Expr n)
+data RawExpr (l :: Nat) where
+  REOr    :: Ann -> RawExpr 1 -> RawExpr 0            -> RawExpr 0
+  REAnd   :: Ann -> RawExpr 2 -> RawExpr 1            -> RawExpr 1
+  RERelOp :: Ann -> Op 'Rel -> RawExpr 2 -> RawExpr 3 -> RawExpr 2
+  REAddOp :: Ann -> Op 'Add -> RawExpr 3 -> RawExpr 4 -> RawExpr 3
+  REMulOp :: Ann -> Op 'Mul -> RawExpr 4 -> RawExpr 5 -> RawExpr 4
+  RENot   :: Ann -> RawExpr 6                         -> RawExpr 5
+  RENeg   :: Ann -> RawExpr 6                         -> RawExpr 5
+  REProj  :: Ann -> RawExpr 6 -> Id                   -> RawExpr 6
+  REMApp  :: Ann -> RawExpr 6 -> Id -> [RawExpr 0]    -> RawExpr 6
+  RELit   :: Ann -> Lit                               -> RawExpr 7
+  REApp   :: Ann -> Id -> [RawExpr 0]                 -> RawExpr 7
+  REVar   :: Ann -> Id                                -> RawExpr 7
+  REPar   :: Ann -> RawExpr 0                         -> RawExpr 7
+  RECoe   ::        RawExpr (n + 1)                   -> RawExpr n
+deriving instance Show (RawExpr n)
 
 
-type E = Expr 0
+type E = RawExpr 0
 
 
-data Stmt
-  = SAssg Ann Id E
-  | SDecl Ann Type (NonEmpty (Id, Maybe E))
-  | SIncr Ann Id
-  | SDecr Ann Id
-  | SRet Ann E
-  | SVRet Ann
-  | SCond Ann E Stmt
-  | SCondElse Ann E Stmt Stmt
-  | SWhile Ann E Stmt
-  | SExp Ann E
-  | SBlock Ann [Stmt]
-  | SEmpty Ann
+data RawStmt
+  = RSAssg Ann Id E
+  | RSDecl Ann (Type 'Untyped) (NonEmpty (Id, Maybe E))
+  | RSIncr Ann Id
+  | RSDecr Ann Id
+  | RSRet Ann E
+  | RSVRet Ann
+  | RSCond Ann E RawStmt
+  | RSCondElse Ann E RawStmt RawStmt
+  | RSWhile Ann E RawStmt
+  | RSExp Ann E
+  | RSBlock Ann [RawStmt]
+  | RSEmpty Ann
   deriving (Show)
 
-
-data TopDef
-  = TopFun Ann Type Id [Arg] Stmt
-  | TopClass Ann Id [ClassMember]
-  deriving (Show)
-
-
-data ClassMember
-  = Method Ann ClassMemberAccess ClassMemberPlace Type Id [Arg] Stmt
-  | AbstractMethod Ann ClassMemberAccess ClassMemberPlace Type Id [Arg]
-  | Field Ann ClassMemberAccess ClassMemberPlace Type (NonEmpty (Id, Maybe E))
-  | Constructor Ann ClassMemberAccess (Maybe Id) [Arg] Stmt
-  deriving (Show)
-
-
-data ClassMemberPlace = Dynamic | Static
-  deriving (Show)
-data ClassMemberAccess = Private | Public
-  deriving (Show)
-
-newtype Program = Program [TopDef]
-  deriving (Show)
-
-
-instance HasAnn Stmt where
-  getAnn = \case
-    SAssg a _ _ -> a
-    SDecl a _ _ -> a
-    SIncr a _ -> a
-    SDecr a _ -> a
-    SRet a _ -> a
-    SVRet a -> a
-    SCond a _ _ -> a
-    SCondElse a _ _ _ -> a
-    SWhile a _ _ -> a
-    SExp a _ -> a
-    SBlock a _ -> a
-    SEmpty a -> a

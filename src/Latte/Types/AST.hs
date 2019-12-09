@@ -1,91 +1,102 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
 module Latte.Types.AST where
 
 import Data.List.NonEmpty(NonEmpty)
 
 -- import Latte.Types.Syntax hiding (Op, Expr(..), TopDef(..), Program(..))
-import qualified Latte.Types.Syntax as S
+import Latte.Types.Syntax
 import Latte.Types.Latte
 
 
-data Op where
-  Op :: S.Op t -> Op
-deriving instance Show Op
+data AnyOp where
+  Op :: Op t -> AnyOp
+deriving instance Show AnyOp
 
-data Expr p
-  = ELit Ann p Lit
-  | EApp Ann p Id [Expr p]
-  | EVar Ann p Id
-  | ENeg Ann p (Expr p)
-  | ENot Ann p (Expr p)
-  | EOp  Ann p Op (Expr p) (Expr p)
-deriving instance Show p => Show (Expr p)
+type family ExprDecoration (s :: Stage) where
+  ExprDecoration 'Untyped = ()
+  ExprDecoration 'Typed = Type 'Typed
+  ExprDecoration 'Resolved = Type 'Resolved
+type family ProjectionIndex (s :: Stage) where
+  ProjectionIndex 'Untyped = Id
+  ProjectionIndex 'Typed = Int
+class (Show (ExprDecoration s), Show (ProjectionIndex s)) => FullShow s where
 
-data Stmt e
-  = SAssg Ann Id e (Stmt e)
-  | SDecl Ann Type (NonEmpty (Id, Maybe e)) (Stmt e)
+data Expr (s :: Stage) where
+  ELit  :: Ann -> ExprDecoration s -> Lit -> Expr s
+  EApp  :: Ann -> ExprDecoration s -> Id -> [Expr s] -> Expr s
+  EVar  :: Ann -> ExprDecoration s -> Id -> Expr s
+  ENeg  :: Ann -> ExprDecoration s -> Expr s -> Expr s
+  ENot  :: Ann -> ExprDecoration s -> Expr s -> Expr s
+  EOp   :: Ann -> ExprDecoration s -> AnyOp -> Expr s -> Expr s -> Expr s
+  EProj :: Ann -> ExprDecoration s -> Expr s -> ProjectionIndex s -> Expr s
+  EMApp :: Unresolved s =>
+           Ann -> ExprDecoration s -> Expr s  -> ProjectionIndex s -> Expr s
+deriving instance FullShow s => Show (Expr s)
+
+data Stmt (e :: Stage)
+  = SAssg Ann Id (Expr e) (Stmt e)
+  | SDecl Ann (Type e) (NonEmpty (Id, Maybe (Expr e))) (Stmt e)
   | SIncr Ann Id (Stmt e)
   | SDecr Ann Id (Stmt e)
-  | SRet Ann e
+  | SRet Ann (Expr e)
   | SVRet Ann
-  | SCond Ann e (Stmt e) (Stmt e)
-  | SCondElse Ann e (Stmt e) (Stmt e) (Stmt e)
-  | SWhile Ann e (Stmt e) (Stmt e)
-  | SExp Ann e (Stmt e)
+  | SCond Ann (Expr e) (Stmt e) (Stmt e)
+  | SCondElse Ann (Expr e) (Stmt e) (Stmt e) (Stmt e)
+  | SWhile Ann (Expr e) (Stmt e) (Stmt e)
+  | SExp Ann (Expr e) (Stmt e)
   | SBlock Ann (Stmt e) (Stmt e)
   | SEmpty
-  deriving (Show)
-
-data TopDef p
-  = TopFun Ann Type Id [Arg] (Stmt (Expr p))
-  | TopClass Ann Id [ClassMember]
-  deriving (Show)
-
-newtype Program p = Program [TopDef p]
+deriving instance FullShow s => Show (Stmt s)
 
 
-entailExpr :: S.Expr t -> Expr ()
+entailExpr :: RawExpr t -> Expr Untyped
 entailExpr = \case
-  S.EOr    ann e1 e2 -> EOp ann () (Op $ S.Or ann)  (entailExpr e1) (entailExpr e2)
-  S.EAnd   ann e1 e2 -> EOp ann () (Op $ S.And ann) (entailExpr e1) (entailExpr e2)
-  S.ERelOp ann op e1 e2 -> EOp ann () (Op op) (entailExpr e1) (entailExpr e2)
-  S.EAddOp ann op e1 e2 -> EOp ann () (Op op) (entailExpr e1) (entailExpr e2)
-  S.EMulOp ann op e1 e2 -> EOp ann () (Op op) (entailExpr e1) (entailExpr e2)
-  S.ENot   ann e -> ENot ann () (entailExpr e)
-  S.ENeg   ann e -> ENeg ann () (entailExpr e)
-  S.ELit   ann l -> ELit ann () l
-  S.EApp   ann f args -> EApp ann () f (map entailExpr args)
-  S.EVar   ann v -> EVar ann () v
-  S.EPar   _ e -> entailExpr e
-  S.ECoe   e -> entailExpr e
+  REOr    ann e1 e2 -> EOp ann () (Op $ Or ann)  (entailExpr e1) (entailExpr e2)
+  REAnd   ann e1 e2 -> EOp ann () (Op $ And ann) (entailExpr e1) (entailExpr e2)
+  RERelOp ann op e1 e2 -> EOp ann () (Op op) (entailExpr e1) (entailExpr e2)
+  REAddOp ann op e1 e2 -> EOp ann () (Op op) (entailExpr e1) (entailExpr e2)
+  REMulOp ann op e1 e2 -> EOp ann () (Op op) (entailExpr e1) (entailExpr e2)
+  RENot   ann e -> ENot ann () (entailExpr e)
+  RENeg   ann e -> ENeg ann () (entailExpr e)
+  RELit   ann l -> ELit ann () l
+  REApp   ann f args -> EApp ann () f (map entailExpr args)
+  REVar   ann v -> EVar ann () v
+  REPar   _ e -> entailExpr e
+  RECoe   e -> entailExpr e
 
-entailStmt :: S.Stmt -> Stmt (Expr ())
+entailStmt :: RawStmt -> Stmt Untyped
 entailStmt s =
-  let entailSingle :: S.Stmt -> (Stmt (Expr ()) -> Stmt (Expr ()))
+  let entailSingle :: RawStmt -> Stmt Untyped -> Stmt Untyped
       entailSingle = \case
-        S.SAssg ann i v -> SAssg ann i (entailExpr v)
-        S.SDecl ann t vs -> SDecl ann t $ fmap (\(i, em) -> (i, entailExpr <$> em)) vs
-        S.SIncr ann i -> SIncr ann i
-        S.SDecr ann i -> SDecr ann i
-        S.SRet ann e -> const $ SRet ann (entailExpr e)
-        S.SVRet ann -> const $ SVRet ann
-        S.SCond ann c t -> SCond ann (entailExpr c) (entailStmt t)
-        S.SCondElse ann c t e -> SCondElse ann (entailExpr c) (entailStmt t) (entailStmt e)
-        S.SWhile ann c b -> SWhile ann (entailExpr c) (entailStmt b)
-        S.SExp ann e -> SExp ann (entailExpr e)
-        S.SBlock ann sts -> SBlock ann (composeSts $ map entailSingle sts)
-        S.SEmpty ann -> const $ SEmpty
+        RSAssg ann i v -> SAssg ann i (entailExpr v)
+        RSDecl ann t vs -> SDecl ann t $ fmap (\(i, em) -> (i, entailExpr <$> em)) vs
+        RSIncr ann i -> SIncr ann i
+        RSDecr ann i -> SDecr ann i
+        RSRet ann e -> const $ SRet ann (entailExpr e)
+        RSVRet ann -> const $ SVRet ann
+        RSCond ann c t -> SCond ann (entailExpr c) (entailStmt t)
+        RSCondElse ann c t e -> SCondElse ann (entailExpr c) (entailStmt t) (entailStmt e)
+        RSWhile ann c b -> SWhile ann (entailExpr c) (entailStmt b)
+        RSExp ann e -> SExp ann (entailExpr e)
+        RSBlock ann sts -> SBlock ann (composeSts $ map entailSingle sts)
+        RSEmpty ann -> const $ SEmpty
       composeSts fs = foldr (.) id fs $ SEmpty
   in entailSingle s SEmpty
 
-entailTopDef :: S.TopDef -> TopDef ()
-entailTopDef = \case
-  S.TopFun ann t name args body ->
-    TopFun ann t name args (entailStmt body)
 
-entailProgram :: S.Program -> Program ()
-entailProgram (S.Program funs) = Program (map entailFunDef funs)
+getExprDec :: Expr s -> ExprDecoration s
+getExprDec = \case
+  ELit _ a _ -> a
+  EVar _ a _ -> a
+  EApp _ a _ _ -> a
+  ENeg _ a _ -> a
+  ENot _ a _ -> a
+  EOp  _ a _ _ _ -> a
 
 
 instance HasAnn (Expr p) where
@@ -97,12 +108,69 @@ instance HasAnn (Expr p) where
     ENot a _ _ -> a
     EOp  a _ _ _ _ -> a
 
-instance HasAnn (TopDef p) where
-  getAnn = \case
-    FunDef a _ _ _ _ -> a
+
+data TopDef (s :: Stage)
+  = TopFun
+    { tdAnn :: Ann
+    , tdType :: Type s
+    , tdId :: Id
+    , tdArgs :: [Arg s]
+    , tdFunBody :: Stmt s
+    }
+  | TopClass
+    { tdAnn :: Ann
+    , tdId :: Id
+    , tdSuper :: Maybe Id
+    , tdClassBody :: [ClassMember s]
+    }
+deriving instance FullShow s => Show (TopDef s)
 
 
-instance HasAnn (Stmt e) where
+data ClassMember (s :: Stage)
+  = Method
+    { cmAnn :: Ann
+    , cmAccess :: ClassMemberAccess
+    , cmPlace :: ClassMemberPlace
+    , cmRetType :: Type s
+    , cmId :: Id
+    , cmArgs :: [Arg s]
+    , cmBody :: Stmt s
+    }
+  | AbstractMethod
+    { cmAnn :: Ann
+    , cmAccess :: ClassMemberAccess
+    , cmPlace :: ClassMemberPlace
+    , cmRetType :: Type s
+    , cmId :: Id
+    , cmArgs :: [Arg s]
+    }
+  | Field
+    { cmAnn :: Ann
+    , cmAccess :: ClassMemberAccess
+    , cmPlace :: ClassMemberPlace
+    , cmType :: Type s
+    , cmAssignments :: (NonEmpty (Id, Maybe (Expr s)))
+    }
+  | Constructor
+    { cmAnn :: Ann
+    , cmAccess :: ClassMemberAccess
+    , cmOptId :: (Maybe Id)
+    , cmArgs :: [Arg s]
+    , cmBody :: Stmt s
+    }
+deriving instance FullShow s => Show (ClassMember s)
+
+
+data ClassMemberPlace = Dynamic | Static
+  deriving (Show)
+data ClassMemberAccess = Private | Public
+  deriving (Show)
+
+newtype Program (s :: Stage) = Program [TopDef s]
+deriving instance FullShow s => Show (Program s)
+
+
+instance HasAnn (Stmt s) where
   getAnn = \case
     SAssg a _ _ _ -> a
     SDecl a _ _ _ -> a
@@ -116,13 +184,3 @@ instance HasAnn (Stmt e) where
     SExp a _ _ -> a
     SBlock a _ _ -> a
     SEmpty -> fakeAnn
-
-
-getExprDec :: Expr a -> a
-getExprDec = \case
-  ELit _ a _ -> a
-  EVar _ a _ -> a
-  EApp _ a _ _ -> a
-  ENeg _ a _ -> a
-  ENot _ a _ -> a
-  EOp  _ a _ _ _ -> a
