@@ -1,0 +1,16 @@
+int x = 2;
+int y = x * 2 + 1;
+x = 3;
+return y + x;
+
+----------
+
+int x = 2
+
+int y_1 = x * 2
+int y = y_1 + 1
+
+int x = 3;
+
+int r = y + x
+ret r

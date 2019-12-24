@@ -37,8 +37,7 @@ library:
     - text
     - containers
     - ghc
-    - tardis
-
+    - pretty
 executables:
   lattec:
     main:                Main.hs
@@ -48,7 +47,7 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     - -O2
-    - -Weverything
+    - -Wall
     - -Wno-implicit-prelude
     dependencies:
     - latte

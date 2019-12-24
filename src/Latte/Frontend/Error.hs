@@ -1,13 +1,13 @@
-module Latte.Error where
+module Latte.Frontend.Error where
 
-import Latte.Types.Latte
+import Latte.Frontend.AST
 
 emph :: String -> String
 emph s = "\x1b[1m" <> s <> "\x1b[0m"
 
-typeMatchError :: Type a -> Type a -> String
+typeMatchError :: Type -> Type -> String
 typeMatchError t1 t2 =
-  "Opsie Whoopsie x_x I kant metch typz!! me wnted " <> emph (show t1) <> " but @daddy@ giv " <> emph (show t2) <> " but thx anyway Xoxox"
+  "Opsie Whoopsie x_x I kant metch typz!! me wnted " <> emph (pp t1) <> " but @daddy@ giv " <> emph (pp t2) <> " but thx anyway Xoxox"
 
 classMatchError :: Id -> Id -> String
 classMatchError Id{iName = c1} Id{iName = c2} =
