@@ -4,9 +4,16 @@ import Latte.Frontend.AST
 import Latte.Frontend.Parse
 import Latte.Frontend.Typechecker
 import Latte.Frontend.IR
+import qualified Latte.Backend.X86.Compile as X86
 
 
 import Data.Text(pack)
+
+testX86 :: String -> IO ()
+testX86 s =
+  case runLatteParser program "test" (pack s) >>= tcProgram of
+    Left e -> putStrLn e
+    Right p -> putStrLn $ pp (X86.compile $ compile p)
 
 testIR :: String -> IO ()
 testIR s =

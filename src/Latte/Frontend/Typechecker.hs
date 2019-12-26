@@ -181,7 +181,7 @@ tcStmt = \case
     ct <- tcExpr c
     assertType TBool ct
     bt <- tcStmt b
-    SCond ann ct bt <$> tcStmt k
+    SWhile ann ct bt <$> tcStmt k
   SExp ann e k -> do
     et <- tcExpr e
     SExp ann et <$> tcStmt k

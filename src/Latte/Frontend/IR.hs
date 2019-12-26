@@ -12,6 +12,7 @@ import Text.PrettyPrint.HughesPJClass
 import Data.String
 import Data.Functor
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Control.Monad.RWS hiding ((<>))
 import Control.Monad.Identity
 import Control.Lens hiding (Const)
@@ -34,15 +35,18 @@ data Instr
 data FinInstr
   = Ret (Maybe Const)
   | Jmp Label
-  | Br Const Label Label
+  | Br Cond Label Label
+
+data Cond = Cond RelOp Const Const | CondConst Const
 
 data Expr
-  = Op BOp Const Const
+  = NumOp NumOp Const Const
+  | RelOp RelOp Const Const
   | Const Const
   | Call Label [Const] -- result fname args
 
-data BOp = Add | Sub | Mul | Div | Mod | Or | And
-         | Eq | Neq | Lt | Le | Gt | Ge
+data NumOp = Add | Sub | Mul | Div | Mod | Or | And
+data RelOp = Eq | Neq | Lt | Le | Gt | Ge
 
 data Const = CVar VarId | CInt Integer
 
@@ -126,20 +130,50 @@ cExpr = \case
     write $ case o of
       AST.Op (AST.Plus _)  -> case te of
         AST.TString -> [Assg t v (Call "strcat" [lv, rv])]
-        _ -> [Assg t v (Op Add lv rv)]
-      AST.Op (AST.Minus _) -> [Assg t v (Op Sub lv rv)]
-      AST.Op (AST.Mult _)  -> [Assg t v (Op Mul lv rv)]
-      AST.Op (AST.Div _)   -> [Assg t v (Op Div lv rv)]
-      AST.Op (AST.Mod _)   -> [Assg t v (Op Mod lv rv)]
-      AST.Op (AST.And _)   -> [Assg t v (Op And lv rv)]
-      AST.Op (AST.Or _)    -> [Assg t v (Op Or lv rv)]
-      AST.Op (AST.LT _)    -> [Assg t v (Op Lt lv rv)]
-      AST.Op (AST.LEQ _)   -> [Assg t v (Op Le lv rv)]
-      AST.Op (AST.EQ _)    -> [Assg t v (Op Eq lv rv)]
-      AST.Op (AST.NEQ _)   -> [Assg t v (Op Neq lv rv)]
-      AST.Op (AST.GEQ _)   -> [Assg t v (Op Ge lv rv)]
-      AST.Op (AST.GT _)    -> [Assg t v (Op Gt lv rv)]
+        _ -> [Assg t v (NumOp Add lv rv)]
+      AST.Op (AST.Minus _) -> [Assg t v (NumOp Sub lv rv)]
+      AST.Op (AST.Mult _)  -> [Assg t v (NumOp Mul lv rv)]
+      AST.Op (AST.Div _)   -> [Assg t v (NumOp Div lv rv)]
+      AST.Op (AST.Mod _)   -> [Assg t v (NumOp Mod lv rv)]
+      AST.Op (AST.And _)   -> [Assg t v (NumOp And lv rv)]
+      AST.Op (AST.Or _)    -> [Assg t v (NumOp Or lv rv)]
+      AST.Op (AST.LT _)    -> [Assg t v (RelOp Lt lv rv)]
+      AST.Op (AST.LEQ _)   -> [Assg t v (RelOp Le lv rv)]
+      AST.Op (AST.EQ _)    -> [Assg t v (RelOp Eq lv rv)]
+      AST.Op (AST.NEQ _)   -> [Assg t v (RelOp Neq lv rv)]
+      AST.Op (AST.GEQ _)   -> [Assg t v (RelOp Ge lv rv)]
+      AST.Op (AST.GT _)    -> [Assg t v (RelOp Gt lv rv)]
     return $ CVar v
+
+cCondJump :: AST.Expr 'AST.Typed -> Label -> Label -> Compiler ()
+cCondJump e ltrue lfalse =
+  let relCond o l r = do
+        lv <- cExpr l
+        rv <- cExpr r
+        cutBlock (Br (Cond o lv rv) ltrue lfalse)
+      naiveCond = do
+        ve <- cExpr e
+        cutBlock (Br (CondConst ve) ltrue lfalse)
+  in case e of
+    AST.EOp _ _ o l r -> case o of
+      AST.Op (AST.Or _)   -> do
+        step <- makeLabel "cond_step_or"
+        cCondJump l ltrue step
+        newBlock step $
+          cCondJump r ltrue lfalse
+      AST.Op (AST.And _)   -> do
+        step <- makeLabel "cond_step_and"
+        cCondJump l step lfalse
+        newBlock step $
+          cCondJump r ltrue lfalse
+      AST.Op (AST.LT _)    -> relCond Lt l r
+      AST.Op (AST.LEQ _)   -> relCond Le l r
+      AST.Op (AST.EQ _)    -> relCond Eq l r
+      AST.Op (AST.NEQ _)   -> relCond Neq l r
+      AST.Op (AST.GEQ _)   -> relCond Ge l r
+      AST.Op (AST.GT _)    -> relCond Gt l r
+      _ -> naiveCond
+    _ -> naiveCond
 
 
 cutBlock :: FinInstr -> Compiler ()
@@ -170,12 +204,12 @@ cStmt = \case
   AST.SIncr _ v k -> do
     t <- cType AST.TInt
     vv <- loadVar v
-    write [Assg t vv (Op Add (CVar vv) (CInt 1))]
+    write [Assg t vv (NumOp Add (CVar vv) (CInt 1))]
     cStmt k
   AST.SDecr _ v k -> do
     t <- cType AST.TInt
     vv <- loadVar v
-    write [Assg t vv (Op Sub (CVar vv) (CInt 1))]
+    write [Assg t vv (NumOp Sub (CVar vv) (CInt 1))]
     cStmt k
   AST.SVRet _ _ -> do
     cutBlock (Ret Nothing)
@@ -185,16 +219,14 @@ cStmt = \case
   AST.SCond _ e b k -> do
     cl <- makeLabel "if_cont"
     bl <- makeLabel "if_body"
-    ve <- cExpr e
-    cutBlock (Br ve bl cl)
+    cCondJump e bl cl
     newBlockCont bl cl (cStmt b)
     newBlock cl (cStmt k)
   AST.SCondElse _ e tb eb k -> do
     cl <- makeLabel "if_cont"
     tl <- makeLabel "if_body_then"
     el <- makeLabel "if_body_else"
-    ve <- cExpr e
-    cutBlock (Br ve tl el)
+    cCondJump e tl el
     newBlockCont tl cl (cStmt tb)
     newBlockCont el cl (cStmt eb)
     newBlock cl (cStmt k)
@@ -204,11 +236,8 @@ cStmt = \case
     cl <- makeLabel "while_cont"
     cutBlock (Jmp cdl)
     newBlock cdl $ do
-      ve <- cExpr e
-      cutBlock (Br ve bl cl)
-    newBlock bl $ do
-      cStmt b
-      cutBlock (Jmp cdl)
+      cCondJump e bl cl
+    newBlockCont bl cdl (cStmt b)
     newBlock cl (cStmt k)
   AST.SExp _ e k -> do
     void $ cExpr e
@@ -241,6 +270,12 @@ cTopDef = \case
 compile :: AST.Program 'AST.Typed -> IR
 compile (AST.Program ts) = IR $ concatMap cTopDef ts
 
+
+getUsedVars :: Block -> S.Set VarId
+getUsedVars (Block _ instrs _) = S.fromList $ instrs <&> \case
+  Assg _ v _ -> v
+
+
 instance Pretty Type where
   pPrint = \case
     TInt i -> "int" <> int i
@@ -261,7 +296,7 @@ instance Pretty Const where
     CVar v -> pPrint v
     CInt i -> integer i
 
-instance Pretty BOp where
+instance Pretty NumOp where
   pPrint = \case
     Add -> "ADD"
     Sub -> "SUB"
@@ -270,6 +305,9 @@ instance Pretty BOp where
     Mod -> "MOD"
     And -> "AND"
     Or  -> "OR"
+
+instance Pretty RelOp where
+  pPrint = \case
     Eq  -> "EQ"
     Neq -> "NEQ"
     Lt  -> "LT"
@@ -279,9 +317,15 @@ instance Pretty BOp where
 
 instance Pretty Expr where
   pPrint = \case
-    Op b l r -> pPrint b <+> pPrint l <+> pPrint r
+    NumOp o l r -> pPrint o <+> pPrint l <+> pPrint r
+    RelOp o l r -> pPrint o <+> pPrint l <+> pPrint r
     Const c -> pPrint c
     Call f as -> pPrint f <> parens (cat $ punctuate comma $ map pPrint as)
+
+instance Pretty Cond where
+  pPrint = \case
+    Cond o l r -> parens (pPrint o <+> pPrint l <+> pPrint r)
+    CondConst c -> pPrint c
 
 instance Pretty FinInstr where
   pPrint = \case
