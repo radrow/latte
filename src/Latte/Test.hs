@@ -1,74 +1,37 @@
 module Latte.Test where
 
-import qualified Data.Text.IO as T
-
--- import Latte.Parse as P
--- import Latte.PP
--- import Latte.Validator
--- import Latte.LLVM as L
--- import Latte.Types.AST
--- import Llvm
--- import Unique
--- import Outputable
--- import FastString
--- import Data.Map as M
--- import Control.Monad.State
--- import Control.Monad.Reader
--- import Control.Monad.Except
-
--- test p inp =
---   case runParser p "" inp of
---     Left e -> putStrLn e
---     Right x -> print x
+import Latte.Frontend.AST
+import Latte.Frontend.Parse
+import Latte.Frontend.Typechecker
+import Latte.Frontend.IR
+import qualified Latte.Backend.X86.Compile as X86
 
 
--- testFile f = do
---   src <- T.readFile f
---   case runParser P.program f src of
---     Left e -> putStrLn e
---     Right p -> putStrLn $ ppProgram $ entailProgram p
+import Data.Text(pack)
 
+testX86 :: String -> IO ()
+testX86 s =
+  case runLatteParser program "test" (pack s) >>= tcProgram of
+    Left e -> putStrLn e
+    Right p -> putStrLn $ pp (X86.compile $ compile p)
 
--- testLLStmts es = do
---   case runParser P.stmt "test" es
---     of Left e -> putStrLn e
---        Right p ->
---          case fst <$> runReader (runExceptT (evalState (L.stmt $ stmtM p) (SupplyState M.empty newSupply))) newEnv of
---            Right ss ->
---              putStrLn $ showSDocUnsafe $ ppLlvmModule $ LlvmModule
---              []
---              []
---              []
---              []
---              []
---              [ LlvmFunction
---                ( LlvmFunctionDecl
---                  (fsLit "XD")
---                  Internal
---                  CC_Ccc
---                  i32
---                  FixedArgs
---                  []
---                  Nothing
---                )
---                []
---                []
---                Nothing
---                Nothing
---                       [
---                         LlvmBlock
---                         (mkCoVarUnique 2137)
---                         ss
---                       ]
---              ]
---            Left s -> putStrLn s
+testIR :: String -> IO ()
+testIR s =
+  case runLatteParser program "test" (pack s) >>= tcProgram of
+    Left e -> putStrLn e
+    Right p -> putStrLn $ pp (compile p)
 
--- makePrg es = do
---   parsed <- runParser P.program "test" es
---   typed <- tcProgram (entailProgram parsed)
---   L.program typed
+testAST :: String -> IO ()
+testAST s =
+  case runLatteParser program "test" (pack s) >>= tcProgram of
+    Left e -> putStrLn e
+    Right p -> putStrLn $ pp p
 
--- testPrg es = do
---   case makePrg es of
---     Left e -> putStrLn e
---     Right ss -> putStrLn $ showSDocUnsafe $ ppLlvmModule $ ss
+e0 :: String
+e0 = "int f(int x) { if (true) {return 2 + 2;} return 1;}"
+
+e1 :: String
+e1 = "int f(int x, bool y) { int k = 2, l = x + 1; if (y || k == x) {l++;} return l;}"
+
+e2 :: String
+e2 = "int f(int x) { int i = 0; if (x < 0) {return 0;} else {while(x != 0) {i = i + x; x--;}} return i;}"

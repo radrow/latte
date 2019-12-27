@@ -24,14 +24,18 @@ data Reg
   | AL
   | BL
   | CL
+  deriving (Eq)
 
 data Memory = Memory Int Reg (Maybe Reg) Int
+  deriving (Eq)
+
 
 data Operand where
   OReg :: Reg -> Operand
   OMem :: Memory -> Operand
   OConst :: Integer -> Operand
   OLabel :: String -> Operand
+  deriving (Eq)
 
 class IsInteger a where
   fromInteger :: Integer -> a
@@ -71,6 +75,7 @@ data Instr where
   Call :: Operand -> Instr
   Leave :: Instr
   Ret :: Instr
+  deriving (Eq)
 
 type family MemoryBuildF (t :: [*]) = fun | fun -> t where
   MemoryBuildF '[] = Operand
@@ -203,6 +208,41 @@ setle :: MonadWriter [Instr] m => Operand -> m ()
 setle l = tell [Setle l]
 
 
+negJump :: Instr -> Instr
+negJump = \case
+  Je a -> Jne a
+  Jne a -> Je a
+  Jg a -> Jle a
+  Jge a -> Jl a
+  Jl a -> Jge a
+  Jle a -> Jg a
+  e -> error $ "Not a jump instr: " ++ render (pPrint e)
+
+isCondJump :: Instr -> Bool
+isCondJump = \case
+  Je _  -> True
+  Jne _ -> True
+  Jg _  -> True
+  Jge _ -> True
+  Jl _  -> True
+  Jle _ -> True
+  _     -> False
+
+isMem :: Operand -> Bool
+isMem = \case
+  OMem _ -> True
+  _ -> False
+
+isVar :: Operand -> Bool
+isVar = \case
+  OMem _ -> True
+  OReg _ -> True
+  _ -> False
+
+isReg :: Operand -> Bool
+isReg = \case
+  OReg _ -> True
+  _ -> False
 
 instance Pretty Reg where
   pPrint = \case
@@ -235,17 +275,17 @@ instance Pretty Instr where
   pPrint = \case
       Label l -> text l <> ":"
       Push a -> "push" <+> pPrint a
-      Mov a b -> "mov" <+> pPrint a <+> pPrint b
+      Mov a b -> "mov" <+> pPrint a <> comma <+> pPrint b
 
-      Add a b -> "add" <+> pPrint a <+> pPrint b
-      Sub a b -> "sub" <+> pPrint a <+> pPrint b
-      Imul a b -> "imul" <+> pPrint a <+> pPrint b
-      Idiv a b -> "idiv" <+> pPrint a <+> pPrint b
-      Or a b -> "or" <+> pPrint a <+> pPrint b
-      And a b -> "and" <+> pPrint a <+> pPrint b
-      Xor a b -> "xor" <+> pPrint a <+> pPrint b
-      Cmp a b -> "cmp" <+> pPrint a <+> pPrint b
-      Test a b -> "test" <+> pPrint a <+> pPrint b
+      Add a b -> "add" <+> pPrint a <> comma <+> pPrint b
+      Sub a b -> "sub" <+> pPrint a <> comma <+> pPrint b
+      Imul a b -> "imul" <+> pPrint a <> comma <+> pPrint b
+      Idiv a b -> "idiv" <+> pPrint a <> comma <+> pPrint b
+      Or a b -> "or" <+> pPrint a <> comma <+> pPrint b
+      And a b -> "and" <+> pPrint a <> comma <+> pPrint b
+      Xor a b -> "xor" <+> pPrint a <> comma <+> pPrint b
+      Cmp a b -> "cmp" <+> pPrint a <> comma <+> pPrint b
+      Test a b -> "test" <+> pPrint a <> comma <+> pPrint b
 
       Jmp a -> "jmp" <+> pPrint a
       Je a -> "je" <+> pPrint a

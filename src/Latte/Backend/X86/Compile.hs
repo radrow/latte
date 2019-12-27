@@ -19,6 +19,7 @@ import Prelude hiding ((<>), or, and)
 import qualified Latte.Frontend.IR as IR
 import qualified Latte.Frontend.AST as AST
 import Latte.Backend.X86.X86 as X86
+import Latte.Backend.X86.PeepHole
 
 type VarMap = M.Map IR.VarId Operand
 
@@ -158,5 +159,5 @@ cProgram (IR.IR routines) =
   forM_ routines cRoutine
 
 compile :: IR.IR -> Assembly
-compile ir =
+compile ir = optimize $
   Assembly $ snd $ evalRWS (cProgram ir) undefined (St 1)
