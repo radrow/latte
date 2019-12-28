@@ -267,7 +267,7 @@ data Field (s :: Stage) = Field
   { _fieldAnn :: Ann
   , _fieldAccess :: ClassMemberAccess
   , _fieldPlace :: ClassMemberPlace
-  , _fieldValType :: Type
+  , _fieldTy :: Type
   , _fieldAssignments :: NonEmpty (Id, Maybe (Expr s))
   }
 

@@ -53,10 +53,13 @@ makeLabel = do
 
 cConst :: IR.Const -> Operand -> Compiler ()
 cConst ic o = case ic of
+  IR.CVar c | isMem o -> do
+    cloc <- getLoc c
+    mov cloc edx
+    mov edx o
   IR.CVar c -> do
     cloc <- getLoc c
-    mov cloc eax
-    mov eax o
+    mov cloc o
   IR.CInt i -> do
     mov (OConst i) o
 
@@ -90,8 +93,8 @@ cROpJmp o ltrue lfalse = do
 
 
 cInstr :: IR.Instr -> Compiler ()
-cInstr = \case
-  IR.Assg t loc e -> do
+cInstr i = comment (AST.pp i) >> case i of
+  IR.Assg _t loc e -> do
     vloc <- getLoc loc
     case e of
       IR.Const c ->
@@ -106,9 +109,24 @@ cInstr = \case
         cConst r ecx
         cROp o ecx eax
         mov eax vloc
+      IR.UnOp o v -> do
+        cConst v eax
+        case o of
+          IR.Not -> do
+            test eax eax
+            setz eax
+          IR.Neg ->
+            neg eax
+      IR.Call f as -> do
+        forM_ (reverse as) $ \a -> do
+          cConst a eax
+          push eax
+        call (OLabel f)
+        add (OConst $ 4 * fromIntegral (length as)) esp
+        mov eax vloc
 
 cFinInstr :: IR.FinInstr -> Compiler ()
-cFinInstr = \case
+cFinInstr i = comment (AST.pp i) >> case i of
   IR.Ret Nothing -> ret
   IR.Ret (Just v) -> do
     cConst v eax

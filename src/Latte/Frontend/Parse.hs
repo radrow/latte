@@ -6,9 +6,10 @@ import           Control.Applicative        (liftA2)
 import           Control.Applicative.Combinators.NonEmpty(sepBy1)
 import           Control.Monad
 import           Control.Monad.Identity
-import           Data.Void
+import           Data.Void(Void)
 import           Data.Text(Text)
 import           Data.List as DL
+import           Data.List.NonEmpty as NE
 import           Data.Bifunctor
 import           Text.Megaparsec hiding (sepBy1)
 import           Text.Megaparsec.Char
@@ -231,9 +232,15 @@ rawDecl :: Parser (AST.Id, Maybe (AST.RawExpr 0))
 rawDecl = liftA2 (,) (try $ ident <* operator "=") (Just <$> rawExpr)
   <|> liftA2 (,) ident (pure Nothing)
 
+rawDecls :: Parser (NE.NonEmpty (AST.Id, Maybe (AST.RawExpr 0)))
+rawDecls = sepBy1 rawDecl (symbol ",")
 
 decl :: Parser (AST.Id, Maybe (AST.Expr 'AST.Untyped))
 decl = fmap (fmap AST.entailExpr) <$> rawDecl
+
+
+decls :: Parser (NE.NonEmpty (AST.Id, Maybe (AST.Expr 'AST.Untyped)))
+decls = sepBy1 decl (symbol ",")
 
 
 semicolon :: Parser ()
@@ -244,7 +251,7 @@ stmt :: Parser AST.RawStmt
 stmt = choice
   [ block
   , withAnnP AST.RSAssg <*> try (ident <* operator "=") <*> rawExpr <* semicolon
-  , withAnnP AST.RSDecl <*> type_ <*> sepBy1 rawDecl (symbol ",") <* semicolon
+  , withAnnP AST.RSDecl <*> type_ <*> rawDecls <* semicolon
   , withAnnP AST.RSIncr <*> try (ident <* operator "++") <* semicolon
   , withAnnP AST.RSDecr <*> try (ident <* operator "--") <* semicolon
   , withAnnP AST.RSRet <*> (try $ word "return" *> rawExpr) <* semicolon
@@ -277,6 +284,8 @@ type_ = choice
 arg :: Parser AST.Arg
 arg = withAnnP AST.Arg <*> type_ <*> ident
 
+args :: Parser [AST.Arg]
+args = paren (sepBy arg (symbol ","))
 
 topDef :: Parser (AST.TopDef 'AST.Untyped)
 topDef = choice
@@ -285,25 +294,48 @@ topDef = choice
   ]
 
 classDef :: Parser (AST.ClassDef 'AST.Untyped)
-classDef = withAnnP AST.ClassDef <*> try (word "class" *> ident) <*> (optional $ word "extends" *> ident) <*> brac (many classMember)
+classDef = withAnnP AST.ClassDef
+  <*> try (word "class" *> ident)
+  <*> (optional $ word "extends" *> ident)
+  <*> brac (many classMember)
 
 funDef :: Parser (AST.FunDef 'AST.Untyped)
-funDef = withAnnP AST.FunDef <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> body
+funDef = withAnnP AST.FunDef
+  <*> type_
+  <*> ident
+  <*> args
+  <*> body
 
 
 classMember :: Parser (AST.ClassMember 'AST.Untyped)
-classMember = error "TODO"
--- classMember = choice
---   [-- withAnnP AbstractMethod <*> (word "abstract" *> classMemberAccess) <*> classMemberPlace
---    -- <*> type_ <*> ident <*> paren (sepBy arg (symbol ","))
---   -- , withAnnP Method <*> classMemberAccess <*> classMemberPlace
---   --   <*> type_ <*> ident <*> paren (sepBy arg (symbol ",")) <*> stmt
---   -- , withAnnP Constructor <*> (word "constructor" *> classMemberAccess)
---   --   <*> option ident <*> paren (sepBy arg (symbol ",")) stmt
---    withAnnP AST.Field <*> classMemberAccess <*> classMemberPlace <*> type_
---     <*> sepBy1 decl (symbol ",") <* semicolon
---   ]
+classMember = choice
+  [ AST.CMMethod <$> method
+  , AST.CMField <$> field
+  , AST.CMConstructor <$> constructor
+  ]
 
+method :: Parser (AST.Method 'AST.Untyped)
+method = withAnnP AST.Method
+  <*> classMemberAccess
+  <*> classMemberPlace
+  <*> type_
+  <*> ident
+  <*> args
+  <*> optional body
+
+field :: Parser (AST.Field 'AST.Untyped)
+field = withAnnP AST.Field
+  <*> classMemberAccess
+  <*> classMemberPlace
+  <*> type_
+  <*> decls
+
+constructor :: Parser (AST.Constructor 'AST.Untyped)
+constructor = withAnnP AST.Constructor
+  <*> classMemberAccess
+  <*> optional ident
+  <*> args
+  <*> body
 
 classMemberAccess :: Parser AST.ClassMemberAccess
 classMemberAccess =

@@ -43,6 +43,7 @@ instance Prelude.Num a => IsInteger a where
   fromInteger = Prelude.fromInteger
 
 data Instr where
+  Comment :: String -> Instr
   Label :: String -> Instr
   Push :: Operand -> Instr
   Mov :: Operand -> Operand -> Instr
@@ -51,9 +52,11 @@ data Instr where
   Sub :: Operand -> Operand -> Instr
   Imul :: Operand -> Operand -> Instr
   Idiv :: Operand -> Operand -> Instr
+  Not :: Operand -> Instr
   Or :: Operand -> Operand -> Instr
   And :: Operand -> Operand -> Instr
   Xor :: Operand -> Operand -> Instr
+  Neg :: Operand -> Instr
   Cmp :: Operand -> Operand -> Instr
   Test :: Operand -> Operand -> Instr
 
@@ -71,6 +74,8 @@ data Instr where
   Setge :: Operand -> Instr
   Setl :: Operand -> Instr
   Setle :: Operand -> Instr
+  Setz :: Operand  -> Instr
+  Setnz :: Operand -> Instr
 
   Call :: Operand -> Instr
   Leave :: Instr
@@ -122,6 +127,8 @@ cl :: Operand
 cl = OReg CL
 
 
+comment :: MonadWriter [Instr] m => String -> m ()
+comment s = tell [Comment s]
 
 label :: MonadWriter [Instr] m => String -> m ()
 label s = tell [Label s]
@@ -144,6 +151,9 @@ imul l r = tell [Imul l r]
 idiv :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 idiv l r = tell [Idiv l r]
 
+neg :: MonadWriter [Instr] m => Operand -> m ()
+neg l = tell [Neg l]
+
 or :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 or l r = tell [Or l r]
 
@@ -152,6 +162,9 @@ and l r = tell [And l r]
 
 xor :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 xor l r = tell [Xor l r]
+
+not :: MonadWriter [Instr] m => Operand -> m ()
+not l = tell [Not l]
 
 cmp ::  MonadWriter [Instr] m => Operand -> Operand -> m ()
 cmp l r = tell [Cmp l r]
@@ -165,6 +178,10 @@ ret = tell [Ret]
 
 leave :: MonadWriter [Instr] m => m ()
 leave = tell [Leave]
+
+call :: MonadWriter [Instr] m => Operand -> m ()
+call f = tell [Call f]
+
 
 jmp :: MonadWriter [Instr] m => Operand -> m ()
 jmp l = tell [Jmp l]
@@ -207,16 +224,22 @@ setl l = tell [Setl l]
 setle :: MonadWriter [Instr] m => Operand -> m ()
 setle l = tell [Setle l]
 
+setz :: MonadWriter [Instr] m => Operand -> m ()
+setz l = tell [Setz l]
+
+setnz :: MonadWriter [Instr] m => Operand -> m ()
+setnz l = tell [Setnz l]
+
 
 negJump :: Instr -> Instr
 negJump = \case
-  Je a -> Jne a
+  Je a  -> Jne a
   Jne a -> Je a
-  Jg a -> Jle a
+  Jg a  -> Jle a
   Jge a -> Jl a
-  Jl a -> Jge a
+  Jl a  -> Jge a
   Jle a -> Jg a
-  e -> error $ "Not a jump instr: " ++ render (pPrint e)
+  e     -> error $ "Not a jump instr: " ++ render (pPrint e)
 
 isCondJump :: Instr -> Bool
 isCondJump = \case
@@ -227,6 +250,29 @@ isCondJump = \case
   Jl _  -> True
   Jle _ -> True
   _     -> False
+
+jumpTarget :: Instr -> Operand
+jumpTarget = \case
+  Je a  -> a
+  Jne a -> a
+  Jg a  -> a
+  Jge a -> a
+  Jl a  -> a
+  Jle a -> a
+  Jmp a -> a
+  e     -> error $ "Not a jump instr: " ++ render (pPrint e)
+
+setJumpTarget :: Operand -> Instr -> Instr
+setJumpTarget t = \case
+  Je _  -> Je t
+  Jne _ -> Jne t
+  Jg _  -> Jg t
+  Jge _ -> Jge t
+  Jl _  -> Jl t
+  Jle _ -> Jle t
+  Jmp _ -> Jmp t
+  e     -> error $ "Not a jump instr: " ++ render (pPrint e)
+
 
 isMem :: Operand -> Bool
 isMem = \case
@@ -269,10 +315,11 @@ instance Pretty Operand where
     OMem m -> pPrint m
     OReg r -> pPrint r
     OConst c -> "$" <> pPrint c
-    OLabel l -> pPrint l
+    OLabel l -> text l
 
 instance Pretty Instr where
   pPrint = \case
+      Comment s -> ";" <+> text s
       Label l -> text l <> ":"
       Push a -> "push" <+> pPrint a
       Mov a b -> "mov" <+> pPrint a <> comma <+> pPrint b
@@ -281,9 +328,11 @@ instance Pretty Instr where
       Sub a b -> "sub" <+> pPrint a <> comma <+> pPrint b
       Imul a b -> "imul" <+> pPrint a <> comma <+> pPrint b
       Idiv a b -> "idiv" <+> pPrint a <> comma <+> pPrint b
+      Neg a -> "neg" <+> pPrint a
       Or a b -> "or" <+> pPrint a <> comma <+> pPrint b
       And a b -> "and" <+> pPrint a <> comma <+> pPrint b
       Xor a b -> "xor" <+> pPrint a <> comma <+> pPrint b
+      Not a -> "not" <+> pPrint a
       Cmp a b -> "cmp" <+> pPrint a <> comma <+> pPrint b
       Test a b -> "test" <+> pPrint a <> comma <+> pPrint b
 
@@ -301,6 +350,8 @@ instance Pretty Instr where
       Setge a -> "setge" <+> pPrint a
       Setl a -> "setl" <+> pPrint a
       Setle a -> "setle" <+> pPrint a
+      Setz a -> "setz" <+> pPrint a
+      Setnz a -> "setnz" <+> pPrint a
 
       Call a -> "call" <+> pPrint a
       Leave -> "leave"

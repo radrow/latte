@@ -1,4 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Latte.Frontend.Typechecker where
 
 import Latte.Frontend.AST
@@ -7,6 +10,7 @@ import Latte.Frontend.Error
 import Data.Functor
 import qualified Data.Map as M
 import Data.Map(Map)
+import qualified Data.List.NonEmpty as NE
 import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -24,7 +28,7 @@ type VarEnv   = Map Id Type
 type FunEnv   = Map Id (Type, [Type])
 type ClassEnv = Map Id ClassEntry
 data ClassEntry = ClassEntry
-  { _ceSuperClass :: Maybe Id
+  { _ceSuper :: Maybe Id
   , _ceFields :: VarEnv
   , _ceMethods :: FunEnv
   }
@@ -48,24 +52,24 @@ emptyEnv = TypecheckerEnv
   }
 
 
-makeLenses ''TypecheckerEnv
-makeLenses ''ClassEntry
+makeLensesWith abbreviatedFields ''TypecheckerEnv
+makeLensesWith abbreviatedFields ''ClassEntry
 
 
 getClassEntry :: Id -> Typechecker ClassEntry
-getClassEntry i = views teClassEnv (M.lookup i) >>= \case
+getClassEntry i = views classEnv (M.lookup i) >>= \case
   Nothing -> throwError $ undefinedClass i
   Just c -> pure c
 
 
 tcVar :: Id -> Typechecker Type
-tcVar v = (M.lookup v) <$> view teDefinedVars >>= \case
+tcVar v = (M.lookup v) <$> view definedVars >>= \case
   Nothing -> throwError $ undefinedVar v
   Just t -> pure t
 
 
 tcFun :: Id -> Typechecker (Type, [Type])
-tcFun v = (M.lookup v) <$> view teDefinedFuns >>= \case
+tcFun v = (M.lookup v) <$> view definedFuns >>= \case
   Nothing -> throwError $ undefinedVar v
   Just t -> pure t
 
@@ -84,7 +88,7 @@ matchClass :: Id -> Id -> Typechecker ()
 matchClass c1 c2 =
   let search i1 i2 =
         if i1 == i2 then pure True
-        else getClassEntry i2 >>= \ce -> case ce^.ceSuperClass of
+        else getClassEntry i2 >>= \ce -> case ce^.super of
           Nothing -> pure False
           Just i2' -> search i1 i2'
   in search c1 c2 >>= \case
@@ -146,13 +150,13 @@ tcExpr = \case
 
 currentRetType :: Typechecker Type
 currentRetType = maybe (error "fun env not in a funtion") id <$>
-  view teRetType
+  view retType
 
 
 tcStmt :: Stmt 'Untyped -> Typechecker (Stmt 'Typed)
 tcStmt = \case
   SDecl ann t v k -> do
-    local (over teDefinedVars (M.insert v t)) $ SDecl ann t v <$> tcStmt k
+    local (over definedVars (M.insert v t)) $ SDecl ann t v <$> tcStmt k
   SAssg ann v e k -> do
     et <- tcExpr e
     vt <- tcVar v
@@ -216,13 +220,20 @@ isReturning = \case
     isReturning b || isReturning k
   SEmpty _ -> False
 
+buildClassEntry :: ClassDef 'Untyped -> ClassEntry
+buildClassEntry c = ClassEntry
+  { _ceSuper = c ^. super
+  , _ceFields = M.fromList $
+                [(i, t) | (CMField f) <- c^.body, let t = f^.ty, (i, _) <- NE.toList (f^.assignments)]
+  }
 
 buildInitialEnv :: [TopDef 'Untyped] -> Except String TypecheckerEnv
 buildInitialEnv =
   foldM (\prev d ->
            case d of
              TDFun (FunDef _ rt fn args _) -> pure $
-               over teDefinedFuns (M.insert fn (rt, fmap (^.ty) args)) prev
+               over definedFuns (M.insert fn (rt, fmap (^.ty) args)) prev
+             TDClass cd -> pure $ over classEnv (M.insert (cd^.name) (buildClassEntry cd)) prev
         ) emptyEnv
 
 
@@ -232,7 +243,7 @@ tcTopDef = \case
     let addArgEnv = flip M.union
           (M.fromList $ fmap (\(Arg _ t n) -> (n, t)) args)
     when (not $ isReturning body) $ throwError noReturn
-    tbody <- local (over teDefinedVars addArgEnv . set teRetType (Just rt)) (tcStmt body)
+    tbody <- local (over definedVars addArgEnv . set retType (Just rt)) (tcStmt body)
     pure $ TDFun $ FunDef ann rt fname args tbody
 
 

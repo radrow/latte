@@ -21,7 +21,7 @@ import Prelude hiding ((<>))
 data VarId = VarId {vId :: Int} deriving (Ord, Eq)
 data Label = Label {lId :: String} deriving (Ord, Eq)
 
-data Type = TInt Int | TString | TObj Int [Type]
+data Type = TInt Int | TString | TVoid | TObj Int [Type]
 
 data IR = IR [Routine]
 
@@ -42,13 +42,15 @@ data Cond = Cond RelOp Const Const | CondConst Const
 data Expr
   = NumOp NumOp Const Const
   | RelOp RelOp Const Const
+  | UnOp UnOp Const
   | Const Const
-  | Call Label [Const] -- result fname args
+  | Call String [Const] -- result fname args
 
+data UnOp = Neg | Not
 data NumOp = Add | Sub | Mul | Div | Mod | Or | And
 data RelOp = Eq | Neq | Lt | Le | Gt | Ge
 
-data Const = CVar VarId | CInt Integer
+data Const = CVar VarId | CInt Integer | CStr String
 
 type VarMap = M.Map AST.Id VarId
 type TypeMap = M.Map VarId Type
@@ -98,6 +100,13 @@ registerVar t v = do
 loadVar :: AST.Id -> Compiler VarId
 loadVar i = uses varMap (maybe (error $ "no var? " ++ AST.iName i) id . M.lookup i)
 
+localScope :: Compiler a -> Compiler a
+localScope k = do
+  s <- get
+  r <- k
+  modify (set varMap (s^.varMap) . set typeMap (s^.typeMap))
+  return r
+
 makeLabel :: String -> Compiler Label
 makeLabel s = do
   i <- newSup
@@ -111,22 +120,24 @@ cLit :: AST.Lit -> Compiler Const
 cLit = \case
   AST.LInt i -> return $ CInt i
   AST.LBool b -> return $ CInt (if b then 1 else 0)
+  AST.LString s -> return $ CStr s
 
 cType :: Monad m => AST.Type -> m Type
 cType = \case
   AST.TInt -> pure (TInt 32)
   AST.TBool -> pure (TInt 1)
   AST.TString -> pure TString
+  AST.TVoid -> pure TVoid
 
 cExpr :: AST.Expr 'AST.Typed -> Compiler Const
 cExpr = \case
   AST.ELit _ _ l -> cLit l
   AST.EVar _ _ v -> CVar <$> loadVar v
   AST.EOp _ te o l r -> do
-    t <- cType te
-    v <- newVar t
     lv <- cExpr l
     rv <- cExpr r
+    t <- cType te
+    v <- newVar t
     write $ case o of
       AST.Op (AST.Plus _)  -> case te of
         AST.TString -> [Assg t v (Call "strcat" [lv, rv])]
@@ -143,6 +154,21 @@ cExpr = \case
       AST.Op (AST.NEQ _)   -> [Assg t v (RelOp Neq lv rv)]
       AST.Op (AST.GEQ _)   -> [Assg t v (RelOp Ge lv rv)]
       AST.Op (AST.GT _)    -> [Assg t v (RelOp Gt lv rv)]
+    return $ CVar v
+  AST.EUnOp _ te o e -> do
+    ee <- cExpr e
+    let uo = case o of
+          AST.Not -> Not
+          AST.Neg -> Neg
+    t <- cType te
+    v <- newVar t
+    write [Assg t v (UnOp uo ee)]
+    return $ CVar v
+  AST.EApp _ rt f as -> do
+    asRefs <- mapM cExpr as
+    t <- cType rt
+    v <- newVar t
+    write $ [Assg t v (Call (AST.iName f) asRefs)]
     return $ CVar v
 
 cCondJump :: AST.Expr 'AST.Typed -> Label -> Label -> Compiler ()
@@ -220,15 +246,15 @@ cStmt = \case
     cl <- makeLabel "if_cont"
     bl <- makeLabel "if_body"
     cCondJump e bl cl
-    newBlockCont bl cl (cStmt b)
+    newBlockCont bl cl (localScope $ cStmt b)
     newBlock cl (cStmt k)
   AST.SCondElse _ e tb eb k -> do
     cl <- makeLabel "if_cont"
     tl <- makeLabel "if_body_then"
     el <- makeLabel "if_body_else"
     cCondJump e tl el
-    newBlockCont tl cl (cStmt tb)
-    newBlockCont el cl (cStmt eb)
+    newBlockCont tl cl (localScope $ cStmt tb)
+    newBlockCont el cl (localScope $ cStmt eb)
     newBlock cl (cStmt k)
   AST.SWhile _ e b k -> do
     cdl <- makeLabel "while_cond"
@@ -237,18 +263,20 @@ cStmt = \case
     cutBlock (Jmp cdl)
     newBlock cdl $ do
       cCondJump e bl cl
-    newBlockCont bl cdl (cStmt b)
+    newBlockCont bl cdl (localScope $ cStmt b)
     newBlock cl (cStmt k)
   AST.SExp _ e k -> do
     void $ cExpr e
     cStmt k
   AST.SBlock _ b k -> do
-    cStmt b
-    cStmt k
+    bl <- makeLabel "block"
+    cl <- makeLabel "block"
+    cutBlock (Jmp bl)
+    newBlockCont bl cl (localScope $ cStmt b)
+    newBlock cl (cStmt k)
   AST.SEmpty _ -> do
     n <- view nextBlock
     cutBlock (Jmp n)
-
 
 compileBody :: Env -> St -> AST.Stmt 'AST.Typed -> [Block]
 compileBody en st b = snd $ evalRWS (cStmt b) en st
@@ -259,7 +287,7 @@ cFunDef f =
       argIds = map (VarId . negate) [1..length $ f^.AST.args]
       initVarMap = M.fromList $ zip (f^.AST.args <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
-      body = compileBody (initEnv (labelFromId $ f^.AST.name) "init")
+      body = compileBody (initEnv (labelFromId $ f^.AST.name) (Label $ (AST.iName $ f^.AST.name) ++ "_init"))
              (initSt initVarMap initTypeMap) (f^.AST.body)
   in Routine (labelFromId $ f^.AST.name) argIds body
 
@@ -280,6 +308,7 @@ instance Pretty Type where
   pPrint = \case
     TInt i -> "int" <> int i
     TString -> "string"
+    TVoid -> "void"
     TObj i _ -> "obj:" <> int i
 
 instance Pretty Label where
@@ -295,6 +324,12 @@ instance Pretty Const where
   pPrint = \case
     CVar v -> pPrint v
     CInt i -> integer i
+    CStr s -> pPrint s
+
+instance Pretty UnOp where
+  pPrint = \case
+    Not -> "NOT"
+    Neg -> "NEG"
 
 instance Pretty NumOp where
   pPrint = \case
@@ -317,10 +352,11 @@ instance Pretty RelOp where
 
 instance Pretty Expr where
   pPrint = \case
+    UnOp o v -> pPrint o <+> pPrint v
     NumOp o l r -> pPrint o <+> pPrint l <+> pPrint r
     RelOp o l r -> pPrint o <+> pPrint l <+> pPrint r
     Const c -> pPrint c
-    Call f as -> pPrint f <> parens (cat $ punctuate comma $ map pPrint as)
+    Call f as -> text f <> parens (cat $ punctuate comma $ map pPrint as)
 
 instance Pretty Cond where
   pPrint = \case

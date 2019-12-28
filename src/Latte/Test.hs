@@ -35,3 +35,9 @@ e1 = "int f(int x, bool y) { int k = 2, l = x + 1; if (y || k == x) {l++;} retur
 
 e2 :: String
 e2 = "int f(int x) { int i = 0; if (x < 0) {return 0;} else {while(x != 0) {i = i + x; x--;}} return i;}"
+
+eFactR :: String
+eFactR = "int f(int x) { if (x < 2) return 1; return x * f(x - 1); }"
+
+eFactI :: String
+eFactI = "int f(int x) { int n = 1; while(x > 1) { n = n*x; x--;} return n; }"
