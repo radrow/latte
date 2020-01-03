@@ -126,6 +126,7 @@ type E = RawExpr 0
 
 data RawStmt
   = RSAssg Ann Id E
+  | RSFieldAssg Ann E Id E
   | RSDecl Ann Type (NonEmpty (Id, Maybe E))
   | RSIncr Ann Id
   | RSDecr Ann Id
@@ -158,6 +159,7 @@ data Expr (s :: Stage) where
 
 data Stmt (e :: Stage)
   = SAssg Ann Id (Expr e) (Stmt e)
+  | SFieldAssg Ann (Expr e) Id (Expr e) (Stmt e)
   | SDecl Ann Type Id (Stmt e)
   | SIncr Ann Id (Stmt e)
   | SDecr Ann Id (Stmt e)
@@ -194,6 +196,7 @@ entailStmt s =
   let entailSingle :: RawStmt -> Stmt 'Untyped -> Stmt 'Untyped
       entailSingle = \case
         RSAssg ann i v -> SAssg ann i (entailExpr v)
+        RSFieldAssg ann e i v -> SFieldAssg ann (entailExpr e) i (entailExpr v)
         RSDecl ann t vs ->
           foldr (\(i, mval) lk ->
                    SDecl ann t i .
@@ -299,6 +302,9 @@ makeLensesWith abbreviatedFields ''Field
 makeLensesWith abbreviatedFields ''Constructor
 
 
+instance Show Id where
+  show = iName
+
 instance IsString Id where
   fromString = Id
 
@@ -366,6 +372,7 @@ block b = lbrace $+$ nest 2 b $+$ rbrace
 instance Pretty (Stmt a) where
   pPrint = \case
     SAssg _ v e cont -> pPrint v <+> "=" <+> pPrint e <> semi $+$ pPrint cont
+    SFieldAssg _ b v e cont -> pPrint b <> "." <> pPrint v <+> "=" <+> pPrint e <> semi $+$ pPrint cont
     SDecl _ t v cont -> pPrint t <+> pPrint v <> semi $+$ pPrint cont
     SIncr _ v cont -> "++" <> pPrint v <> semi $+$ pPrint cont
     SDecr _ v cont -> "--" <> pPrint v <> semi $+$ pPrint cont

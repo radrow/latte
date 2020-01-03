@@ -43,4 +43,7 @@ eFactI :: String
 eFactI = "int f(int x) { int n = 1; while(x > 1) { n = n*x; x--;} return n; }"
 
 eStruct :: String
-eStruct = "class dup { public int f; } int f(dup d) { return d.f; }"
+eStruct = "class dup { int f; int g;} dup f(dup d) { dup p; p.f = d.f + d.g; p.g = 10; return p; } int main() { dup d; d.f = 21; d.g = 34; printInt(f(d).f); return 0; }"
+
+es :: String
+es = "class dup { int f; } dup f() {dup d; d.f = 123}"

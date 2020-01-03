@@ -7,6 +7,7 @@
 {-# LANGUAGE RecursiveDo #-}
 module Latte.Backend.X86.Compile where
 
+import Data.Char
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Lens
@@ -16,6 +17,7 @@ import Control.Monad.State
 import Prelude hiding ((<>), or, and)
 
 import qualified Latte.Frontend.IR as IR
+import qualified Latte.Frontend.AST as AST
 import Latte.Backend.X86.X86 as X86
 import Latte.Backend.X86.PeepHole
 
@@ -50,8 +52,10 @@ makeLabel s = do
   label l
   return l
 
-makeStrName :: String -> String
-makeStrName s = "local_str_" ++ s
+makeStrName :: String -> Compiler String
+makeStrName s = do
+  i <- nextSup
+  return $ "local_str_" ++ filter isAlphaNum s ++ "_" ++ show i
 
 requestStr :: String -> Compiler ()
 requestStr s = modify $ over strings (S.insert s)
@@ -69,10 +73,11 @@ cConst ic o = case ic of
     mov (OConst i) o
   IR.CStr s -> do
     requestStr s
+    sn <- makeStrName s
     if isReg o
-      then mov (OVar $ makeStrName s) o
+      then mov (OVar sn) o
       else do
-      mov (OVar $ makeStrName s) edx
+      mov (OVar sn) edx
       mov edx o
 
 cNOp :: IR.NumOp -> Operand -> Operand -> Compiler ()
@@ -85,11 +90,17 @@ cNOp = \case
   IR.Or  -> or
 
 cROp :: IR.RelOp -> Operand -> Operand -> Compiler ()
-cROp = \case
-  IR.Eq  -> \l r -> do
-    cmp l r
-    sete al
-    test al al
+cROp o l r = do
+  let i = case o of
+        IR.Eq  -> sete
+        IR.Neq  -> setne
+        IR.Gt  -> setg
+        IR.Ge  -> setge
+        IR.Lt  -> setl
+        IR.Le  -> setle
+  cmp l r
+  i al
+  test al al
 
 cROpJmp :: IR.RelOp -> String -> String -> Compiler ()
 cROpJmp o ltrue lfalse = do
@@ -103,39 +114,66 @@ cROpJmp o ltrue lfalse = do
   j $ OLabel ltrue
   jmp $ OLabel lfalse
 
+sizeOf :: IR.Type -> Compiler Int
+sizeOf = \case
+  IR.TObj _ flds -> return $ (length flds + 1) * 4
+  _ -> return 4
+
+cExpr :: IR.Type -> Operand -> IR.Expr -> Compiler ()
+cExpr t vloc e = case e of
+  IR.Const c ->
+    cConst c vloc
+  IR.NumOp o l r -> do
+    cConst l eax
+    cConst r ecx
+    cNOp o ecx eax
+    mov eax vloc
+  IR.RelOp o l r -> do
+    cConst l eax
+    cConst r ecx
+    cROp o ecx eax
+    mov eax vloc
+  IR.UnOp o v -> do
+    cConst v eax
+    case o of
+      IR.Not -> do
+        test eax eax
+        setz eax
+      IR.Neg ->
+        neg eax
+    mov eax vloc
+  IR.Call f as -> do
+    forM_ (reverse as) $ \a -> do
+      cConst a eax
+      push eax
+    call (OLabel f)
+    add (OConst $ 4 * fromIntegral (length as)) esp
+    mov eax vloc
+  IR.Proj v off -> do
+    cConst v eax
+    mov (OConst $ fromIntegral off) edx
+    mov (mem (0 :: Int) (EAX, EDX, 4 :: Int)) eax
+    mov eax vloc
+  IR.NewObj -> do
+    s <- sizeOf t
+    push (OConst $ toInteger s)
+    call (OLabel "malloc")
+    add (OConst 4) esp
+    mov eax vloc
+
 
 cInstr :: IR.Instr -> Compiler ()
-cInstr i = case i of
+cInstr i = comment (AST.pp i) >> case i of
   IR.Assg t loc e -> do
     vloc <- getLoc loc
-    case e of
-      IR.Const c ->
-        cConst c vloc
-      IR.NumOp o l r -> do
-        cConst l eax
-        cConst r ecx
-        cNOp o ecx eax
-        mov eax vloc
-      IR.RelOp o l r -> do
-        cConst l eax
-        cConst r ecx
-        cROp o ecx eax
-        mov eax vloc
-      IR.UnOp o v -> do
-        cConst v eax
-        case o of
-          IR.Not -> do
-            test eax eax
-            setz eax
-          IR.Neg ->
-            neg eax
-      IR.Call f as -> do
-        forM_ (reverse as) $ \a -> do
-          cConst a eax
-          push eax
-        call (OLabel f)
-        add (OConst $ 4 * fromIntegral (length as)) esp
-        mov eax vloc
+    cExpr t vloc e
+  IR.FieldAssg t b f e -> do
+    cConst b ecx
+    push ecx
+    mov (OConst $ fromIntegral f) edx
+    cExpr t eax e
+    pop ecx
+    mov eax (mem (0 :: Int) (ECX, EDX, 4 :: Int))
 
 cFinInstr :: IR.FinInstr -> Compiler ()
 cFinInstr i = case i of
@@ -188,7 +226,7 @@ cRoutine (IR.Routine (IR.Label rname) args blocks) = do
 
 compileStrings :: S.Set String -> Compiler ()
 compileStrings strs = forM_ strs $ \s -> do
-  let vname = makeStrName s
+  vname <- makeStrName s
   l <- makeLabel ".LC"
   string s
   label vname

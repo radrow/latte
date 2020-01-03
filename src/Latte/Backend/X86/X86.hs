@@ -48,6 +48,7 @@ data Instr where
   Comment :: String -> Instr
   Label :: String -> Instr
   Push :: Operand -> Instr
+  Pop :: Operand -> Instr
   Mov :: Operand -> Operand -> Instr
 
   Add :: Operand -> Operand -> Instr
@@ -146,6 +147,9 @@ label s = tell [Label s]
 
 push :: MonadWriter [Instr] m => Operand -> m ()
 push o = tell [Push o]
+
+pop :: MonadWriter [Instr] m => Operand -> m ()
+pop o = tell [Pop o]
 
 mov :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 mov l r = tell [Mov l r]
@@ -332,9 +336,10 @@ instance Pretty Operand where
 instance Pretty Instr where
   pPrint = \case
     Ann a as -> "." <> text a <+> vcat (punctuate space (map text as))
-    Comment s -> ";" <+> text s
+    Comment s -> "#" <+> text s
     Label l -> text l <> ":"
     Push a -> "pushl" <+> pPrint a
+    Pop a -> "popl" <+> pPrint a
     Mov a b -> "movl" <+> pPrint a <> comma <+> pPrint b
 
     Add a b -> "add" <+> pPrint a <> comma <+> pPrint b
@@ -373,6 +378,7 @@ instance Pretty Instr where
 instance Pretty Assembly where
   pPrint (Assembly is) = vcat (map smartPrint is) where
     smartPrint i = case i of
-      Label _ -> pPrint i
+      Label _   -> pPrint i
       -- Ann _ _ -> pPrint i
-      _       -> nest 4 (pPrint i)
+      Comment _ -> nest 2 (pPrint i)
+      _         -> nest 4 (pPrint i)

@@ -54,6 +54,7 @@ initialEnv = TypecheckerEnv
     [ ("printInt", (TVoid, [TInt]))
     , ("printString", (TVoid, [TString]))
     , ("readInt", (TInt, []))
+    , ("readString", (TString, []))
     , ("error", (TVoid, []))
     ]
   , _teCurrentFun   = Nothing
@@ -232,6 +233,15 @@ tcStmt = \case
     vt <- tcVar v
     assertType vt et
     SAssg a v et <$> tcStmt k
+  SFieldAssg a b f e k -> do
+    bt <- tcExpr b
+    et <- tcExpr e
+    case getExprDec bt of
+      TClass c -> do
+        t <- tcField c f
+        assertType t et
+        SFieldAssg a bt f et <$> tcStmt k
+      t -> throwError $ notAClass t
   SIncr a v k -> do
     vt <- tcVar v
     matchTypes TInt vt
@@ -277,6 +287,7 @@ isReturning :: Stmt a -> Bool
 isReturning = \case
   SDecl _a _t _decls k -> isReturning k
   SAssg _a _v _e k -> isReturning k
+  SFieldAssg _a _ee _v _e k -> isReturning k
   SIncr _a _v k -> isReturning k
   SDecr _a _v k -> isReturning k
   SCond _a _c _t k -> isReturning k

@@ -265,10 +265,15 @@ stmt = choice
              )
     <*> (word "if" *> paren rawExpr) <*> stmt <*> optional (word "else" *> stmt)
   , withAnnP AST.RSWhile <*> (word "while" *> paren rawExpr) <*> stmt
-  , withAnnP AST.RSExp <*> rawExpr <* semicolon
+  , withAnnP (\a e mv -> case (mv, e) of
+                 (Just v, AST.RECoe
+                   (AST.RECoe (AST.RECoe (AST.RECoe (AST.RECoe (AST.RECoe (AST.REProj _ea ee ei))))))) ->
+                   AST.RSFieldAssg a (cccoe ee) ei v where
+                   cccoe = AST.RECoe . AST.RECoe . AST.RECoe . AST.RECoe . AST.RECoe . AST.RECoe
+                 _ -> AST.RSExp a e
+             ) <*> rawExpr <*> optional (operator "=" *> rawExpr) <* semicolon
   , withAnn (pure AST.RSEmpty) <* semicolon
   ]
-
 
 block :: Parser AST.RawStmt
 block = withAnnP AST.RSBlock <*> brac (many stmt)

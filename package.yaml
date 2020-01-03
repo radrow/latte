@@ -27,6 +27,9 @@ library:
     - KindSignatures
     - TypeFamilies
     - TypeOperators
+    - FlexibleInstances
+    - FunctionalDependencies
+    - MultiParamTypeClasses
   dependencies:
     - mtl
     - free
@@ -38,6 +41,7 @@ library:
     - containers
     - ghc
     - pretty
+    - hashtables
 executables:
   lattec:
     main:                Main.hs

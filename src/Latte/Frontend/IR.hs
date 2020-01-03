@@ -34,6 +34,7 @@ data Block = Block Label [Instr] FinInstr
 
 data Instr
   = Assg Type VarId Expr
+  | FieldAssg Type Const Int Expr
 
 data FinInstr
   = Ret (Maybe Const)
@@ -61,6 +62,7 @@ data Const = CVar VarId | CInt Integer | CStr String
 
 type VarMap = M.Map AST.Id VarId
 type TypeMap = M.Map VarId Type
+type FieldMap = M.Map (AST.Id, AST.Id) Int
 
 data St = St
   { _stSupply :: Int
@@ -88,11 +90,20 @@ initEnv r l = ask >>= \te -> pure Env
 data TopEnv = TopEnv
   { _tenvClassEnv :: Tc.ClassEnv
   , _tenvClassIds :: M.Map AST.Id Int
+  , _tenvFieldEnv :: FieldMap
   }
 initTopEnv :: Tc.ClassEnv -> TopEnv
 initTopEnv ce = TopEnv
   { _tenvClassEnv = ce
   , _tenvClassIds = M.fromList $ zip (M.keys ce) [1..]
+  , _tenvFieldEnv = M.fromList $
+    [ ((className, fieldName), i)
+    | className <- M.keys ce
+    , let fieldsOf c = case (ce M.! c) ^. AST.super of
+            Nothing -> M.keys ((ce M.! c)^.Tc.fields)
+            Just sup -> fieldsOf sup ++ M.keys ((ce M.! c)^.Tc.fields)
+    , (fieldName, i) <- zip (fieldsOf className) [1..]
+    ]
   }
 
 type Compiler = RWS Env [Block] St
@@ -127,10 +138,11 @@ newVar t = do
   modify $ over typeMap (M.insert i t)
   return i
 
-registerVar :: Type -> AST.Id -> Compiler ()
+registerVar :: Type -> AST.Id -> Compiler VarId
 registerVar t v = do
   i <- newVar t
   modify (over varMap (M.insert v i))
+  return i
 
 loadVar :: AST.Id -> Compiler VarId
 loadVar i = uses varMap (maybe (error $ "no var? " ++ AST.iName i) id . M.lookup i)
@@ -171,7 +183,7 @@ cType t = case t of
     i <- views classIds (M.! c)
     let processFields cc =
           let ce = cenv M.! cc in case (ce ^. AST.super) of
-            Nothing -> return []
+            Nothing -> mapM cType (M.elems $ ce^.Tc.fields)
             Just x -> do
               sfs <- processFields x
               fs <- mapM cType (M.elems $ ce^.Tc.fields)
@@ -224,7 +236,9 @@ cExpr = \case
     ce <- cExpr e
     tt <- liftTop $ cType t
     v <- newVar tt
-    write [Assg tt v (Proj ce (error "compute proj number TODO"))]
+    let (AST.TClass c) = AST.getExprDec e
+    offset <- liftTop $ views fieldEnv (M.! (c,fld))
+    write [Assg tt v (Proj ce offset)]
     return $ CVar v
   -- AST.EMApp _ rt e m as -> do
   --   ce <- cExpr e
@@ -239,7 +253,7 @@ cExpr = \case
     alloc <- newVar tt
     construct <- newVar tt
     write [ Assg tt alloc NewObj
-          , Assg tt construct (Call (constrName c n) asRefs)
+          , Assg tt construct (Call (constrName c n) (CVar alloc:asRefs))
           ]
     return $ CVar construct
 
@@ -295,9 +309,20 @@ cStmt = \case
     vv <- loadVar v
     write [Assg t vv (Const ve)]
     cStmt k
+  AST.SFieldAssg _ b f e k -> do
+    vb <- cExpr b
+    ve <- cExpr e
+    t <- liftTop $ cType (AST.getExprDec e)
+    let (AST.TClass c) = AST.getExprDec b
+    offset <- liftTop $ views fieldEnv (M.! (c, f))
+    write [FieldAssg t vb offset (Const ve)]
+    cStmt k
   AST.SDecl _ t v k -> do
     tt <- liftTop $ cType t
-    registerVar tt v
+    vi <- registerVar tt v
+    case tt of
+      TObj _ _ -> write [Assg tt vi NewObj]
+      _ -> return ()
     cStmt k
   AST.SIncr _ v k -> do
     t <- liftTop $ cType AST.TInt
@@ -371,7 +396,7 @@ cFunDef f = do
 cTopDef :: AST.TopDef 'AST.Typed -> TopCompiler [Routine]
 cTopDef = \case
   AST.TDFun f -> pure <$> cFunDef f
-  AST.TDClass todo -> pure [] -- TODO
+  AST.TDClass _todo -> pure [] -- TODO
 
 cProgram :: AST.Program 'AST.Typed -> TopCompiler IR
 cProgram (AST.Program ts) = IR . join <$> mapM cTopDef ts
@@ -381,8 +406,7 @@ compile ce p = runReader (cProgram p) (initTopEnv ce)
 
 
 getUsedVars :: Block -> S.Set VarId
-getUsedVars (Block _ instrs _) = S.fromList $ instrs <&> \case
-  Assg _ v _ -> v
+getUsedVars (Block _ instrs _) = S.fromList $ [v | Assg _ v _ <- instrs]
 
 
 instance Pretty Type where
@@ -457,6 +481,7 @@ instance Pretty FinInstr where
 instance Pretty Instr where
   pPrint = \case
     Assg t i e -> pPrint t <+> pPrint i <+> "=" <+> pPrint e
+    FieldAssg t b f e ->  pPrint t <+> "π_" <> int f <+> pPrint b <+> "=" <+> pPrint e
 
 instance Pretty Block where
   pPrint (Block i is f) =
