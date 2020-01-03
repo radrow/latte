@@ -31,10 +31,11 @@ data Memory = Memory Int Reg (Maybe Reg) Int
 
 
 data Operand where
-  OReg :: Reg -> Operand
-  OMem :: Memory -> Operand
+  OReg   :: Reg -> Operand
+  OMem   :: Memory -> Operand
   OConst :: Integer -> Operand
   OLabel :: String -> Operand
+  OVar   :: String -> Operand
   deriving (Eq)
 
 class IsInteger a where
@@ -43,6 +44,7 @@ instance Prelude.Num a => IsInteger a where
   fromInteger = Prelude.fromInteger
 
 data Instr where
+  Ann :: String -> [String] -> Instr
   Comment :: String -> Instr
   Label :: String -> Instr
   Push :: Operand -> Instr
@@ -126,6 +128,15 @@ bl = OReg BL
 cl :: Operand
 cl = OReg CL
 
+
+long :: MonadWriter [Instr] m => String -> m ()
+long s = tell [Ann "long" [s]]
+
+string :: MonadWriter [Instr] m => String -> m ()
+string s = tell [Ann "string" [show s]]
+
+globl :: MonadWriter [Instr] m => String -> m ()
+globl s = tell [Ann "globl" [s]]
 
 comment :: MonadWriter [Instr] m => String -> m ()
 comment s = tell [Comment s]
@@ -316,49 +327,52 @@ instance Pretty Operand where
     OReg r -> pPrint r
     OConst c -> "$" <> pPrint c
     OLabel l -> text l
+    OVar v -> text v
 
 instance Pretty Instr where
   pPrint = \case
-      Comment s -> ";" <+> text s
-      Label l -> text l <> ":"
-      Push a -> "push" <+> pPrint a
-      Mov a b -> "mov" <+> pPrint a <> comma <+> pPrint b
+    Ann a as -> "." <> text a <+> vcat (punctuate space (map text as))
+    Comment s -> ";" <+> text s
+    Label l -> text l <> ":"
+    Push a -> "pushl" <+> pPrint a
+    Mov a b -> "movl" <+> pPrint a <> comma <+> pPrint b
 
-      Add a b -> "add" <+> pPrint a <> comma <+> pPrint b
-      Sub a b -> "sub" <+> pPrint a <> comma <+> pPrint b
-      Imul a b -> "imul" <+> pPrint a <> comma <+> pPrint b
-      Idiv a b -> "idiv" <+> pPrint a <> comma <+> pPrint b
-      Neg a -> "neg" <+> pPrint a
-      Or a b -> "or" <+> pPrint a <> comma <+> pPrint b
-      And a b -> "and" <+> pPrint a <> comma <+> pPrint b
-      Xor a b -> "xor" <+> pPrint a <> comma <+> pPrint b
-      Not a -> "not" <+> pPrint a
-      Cmp a b -> "cmp" <+> pPrint a <> comma <+> pPrint b
-      Test a b -> "test" <+> pPrint a <> comma <+> pPrint b
+    Add a b -> "add" <+> pPrint a <> comma <+> pPrint b
+    Sub a b -> "sub" <+> pPrint a <> comma <+> pPrint b
+    Imul a b -> "imul" <+> pPrint a <> comma <+> pPrint b
+    Idiv a b -> "idiv" <+> pPrint a <> comma <+> pPrint b
+    Neg a -> "neg" <+> pPrint a
+    Or a b -> "or" <+> pPrint a <> comma <+> pPrint b
+    And a b -> "and" <+> pPrint a <> comma <+> pPrint b
+    Xor a b -> "xor" <+> pPrint a <> comma <+> pPrint b
+    Not a -> "not" <+> pPrint a
+    Cmp a b -> "cmp" <+> pPrint a <> comma <+> pPrint b
+    Test a b -> "test" <+> pPrint a <> comma <+> pPrint b
 
-      Jmp a -> "jmp" <+> pPrint a
-      Je a -> "je" <+> pPrint a
-      Jne a -> "jne" <+> pPrint a
-      Jg a -> "jg" <+> pPrint a
-      Jge a -> "jge" <+> pPrint a
-      Jl a -> "jl" <+> pPrint a
-      Jle a -> "jle" <+> pPrint a
+    Jmp a -> "jmp" <+> pPrint a
+    Je a -> "je" <+> pPrint a
+    Jne a -> "jne" <+> pPrint a
+    Jg a -> "jg" <+> pPrint a
+    Jge a -> "jge" <+> pPrint a
+    Jl a -> "jl" <+> pPrint a
+    Jle a -> "jle" <+> pPrint a
 
-      Sete a -> "sete" <+> pPrint a
-      Setne a -> "setne" <+> pPrint a
-      Setg a -> "setg" <+> pPrint a
-      Setge a -> "setge" <+> pPrint a
-      Setl a -> "setl" <+> pPrint a
-      Setle a -> "setle" <+> pPrint a
-      Setz a -> "setz" <+> pPrint a
-      Setnz a -> "setnz" <+> pPrint a
+    Sete a -> "sete" <+> pPrint a
+    Setne a -> "setne" <+> pPrint a
+    Setg a -> "setg" <+> pPrint a
+    Setge a -> "setge" <+> pPrint a
+    Setl a -> "setl" <+> pPrint a
+    Setle a -> "setle" <+> pPrint a
+    Setz a -> "setz" <+> pPrint a
+    Setnz a -> "setnz" <+> pPrint a
 
-      Call a -> "call" <+> pPrint a
-      Leave -> "leave"
-      Ret -> "ret"
+    Call a -> "call" <+> pPrint a
+    Leave -> "leave"
+    Ret -> "ret"
 
 instance Pretty Assembly where
   pPrint (Assembly is) = vcat (map smartPrint is) where
     smartPrint i = case i of
       Label _ -> pPrint i
-      _       -> nest 2 (pPrint i)
+      -- Ann _ _ -> pPrint i
+      _       -> nest 4 (pPrint i)

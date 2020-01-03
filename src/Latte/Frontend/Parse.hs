@@ -52,7 +52,8 @@ keywords =
   , "else"
   , "int", "string", "bool", "void"
   , "true", "false"
-  , "class"
+  , "class", "public", "private"
+  , "static", "new"
   ]
 
 
@@ -122,7 +123,7 @@ infixL op p x = do
 
 
 ident :: Parser AST.Id
-ident =  lId >>= \i -> if (i `elem` keywords)
+ident =  try $ lId >>= \i -> if (i `elem` keywords)
   then fail $ "Forbidden id: " ++ i else pure (AST.Id i)
 
 
@@ -224,6 +225,8 @@ expr7 = choice
   [ withAnnP AST.REPar <*> paren expr0
   , withAnnP AST.RELit <*> lit
   , try $ withAnnP AST.REApp <*> ident <*> paren (sepBy expr0 (symbol ","))
+  , withAnnP AST.RENew <*> (word "new" *> ident) <*> optional (symbol "." *> ident)
+    <*> paren (sepBy expr0 (symbol ","))
   , withAnnP AST.REVar <*> ident
   ]
 
@@ -251,12 +254,15 @@ stmt :: Parser AST.RawStmt
 stmt = choice
   [ block
   , withAnnP AST.RSAssg <*> try (ident <* operator "=") <*> rawExpr <* semicolon
-  , withAnnP AST.RSDecl <*> type_ <*> rawDecls <* semicolon
+  , try $ withAnnP AST.RSDecl <*> type_ <*> rawDecls <* semicolon
   , withAnnP AST.RSIncr <*> try (ident <* operator "++") <* semicolon
   , withAnnP AST.RSDecr <*> try (ident <* operator "--") <* semicolon
   , withAnnP AST.RSRet <*> (try $ word "return" *> rawExpr) <* semicolon
   , withAnn (AST.RSVRet <$ word "return") <* semicolon
-  , withAnnP (\a c t me -> case me of {Nothing -> AST.RSCond a c t; Just e -> AST.RSCondElse a c t e})
+  , withAnnP (\a c t me -> case me of
+                 Nothing -> AST.RSCond a c t
+                 Just e -> AST.RSCondElse a c t e
+             )
     <*> (word "if" *> paren rawExpr) <*> stmt <*> optional (word "else" *> stmt)
   , withAnnP AST.RSWhile <*> (word "while" *> paren rawExpr) <*> stmt
   , withAnnP AST.RSExp <*> rawExpr <* semicolon
@@ -278,6 +284,7 @@ type_ = choice
   , AST.TBool <$ word "bool"
   , AST.TString <$ word "string"
   , AST.TVoid <$ word "void"
+  , AST.TClass <$> ident
   ]
 
 
@@ -286,6 +293,7 @@ arg = withAnnP AST.Arg <*> type_ <*> ident
 
 args :: Parser [AST.Arg]
 args = paren (sepBy arg (symbol ","))
+
 
 topDef :: Parser (AST.TopDef 'AST.Untyped)
 topDef = choice
@@ -296,7 +304,7 @@ topDef = choice
 classDef :: Parser (AST.ClassDef 'AST.Untyped)
 classDef = withAnnP AST.ClassDef
   <*> try (word "class" *> ident)
-  <*> (optional $ word "extends" *> ident)
+  <*> optional (word "extends" *> ident)
   <*> brac (many classMember)
 
 funDef :: Parser (AST.FunDef 'AST.Untyped)
@@ -309,8 +317,8 @@ funDef = withAnnP AST.FunDef
 
 classMember :: Parser (AST.ClassMember 'AST.Untyped)
 classMember = choice
-  [ AST.CMMethod <$> method
-  , AST.CMField <$> field
+  [ AST.CMField <$> try field
+  , AST.CMMethod <$> method
   , AST.CMConstructor <$> constructor
   ]
 
@@ -329,10 +337,11 @@ field = withAnnP AST.Field
   <*> classMemberPlace
   <*> type_
   <*> decls
+  <* semicolon
 
 constructor :: Parser (AST.Constructor 'AST.Untyped)
 constructor = withAnnP AST.Constructor
-  <*> classMemberAccess
+  <*> (word "new" *> classMemberAccess)
   <*> optional ident
   <*> args
   <*> body

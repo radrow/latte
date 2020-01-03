@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Latte.Frontend.Typechecker where
 
 import Latte.Frontend.AST
@@ -26,31 +27,41 @@ type Typechecker =
 
 type VarEnv   = Map Id Type
 type FunEnv   = Map Id (Type, [Type])
+type ConEnv   = Map (Maybe Id) [Type]
 type ClassEnv = Map Id ClassEntry
 data ClassEntry = ClassEntry
-  { _ceSuper :: Maybe Id
-  , _ceFields :: VarEnv
-  , _ceMethods :: FunEnv
+  { _ceSuper        :: Maybe Id
+  , _ceFields       :: VarEnv
+  , _ceMethods      :: FunEnv
+  , _ceConstructors :: ConEnv
   }
 
 
 data TypecheckerEnv = TypecheckerEnv
-  { _teDefinedVars :: VarEnv
-  , _teDefinedFuns :: FunEnv
-  , _teClassEnv    :: ClassEnv
-  , _teLoc         :: Ann
-  , _teRetType     :: Maybe Type
+  { _teDefinedVars  :: VarEnv
+  , _teDefinedFuns  :: FunEnv
+  , _teCurrentFun   :: Maybe Id
+  , _teCurrentClass :: Maybe Id
+  , _teClassEnv     :: ClassEnv
+  , _teLoc          :: Ann
+  , _teRetType      :: Maybe Type
   }
 
-emptyEnv :: TypecheckerEnv
-emptyEnv = TypecheckerEnv
-  { _teDefinedVars = M.empty
-  , _teDefinedFuns = M.empty
-  , _teClassEnv = M.empty
-  , _teLoc = fakeAnn
-  , _teRetType = Nothing
+initialEnv :: TypecheckerEnv
+initialEnv = TypecheckerEnv
+  { _teDefinedVars  = M.singleton "void" TVoid
+  , _teDefinedFuns  = M.fromList $
+    [ ("printInt", (TVoid, [TInt]))
+    , ("printString", (TVoid, [TString]))
+    , ("readInt", (TInt, []))
+    , ("error", (TVoid, []))
+    ]
+  , _teCurrentFun   = Nothing
+  , _teCurrentClass = Nothing
+  , _teClassEnv     = M.empty
+  , _teLoc          = fakeAnn
+  , _teRetType      = Nothing
   }
-
 
 makeLensesWith abbreviatedFields ''TypecheckerEnv
 makeLensesWith abbreviatedFields ''ClassEntry
@@ -64,6 +75,10 @@ getClassEntry i = views classEnv (M.lookup i) >>= \case
 
 tcVar :: Id -> Typechecker Type
 tcVar v = (M.lookup v) <$> view definedVars >>= \case
+  Nothing | v == Id "this" -> do
+              view currentClass >>= \case
+                Nothing -> throwError notInClass
+                Just c -> pure $ TClass c
   Nothing -> throwError $ undefinedVar v
   Just t -> pure t
 
@@ -73,6 +88,34 @@ tcFun v = (M.lookup v) <$> view definedFuns >>= \case
   Nothing -> throwError $ undefinedVar v
   Just t -> pure t
 
+tcField :: Id -> Id -> Typechecker Type
+tcField c m =
+  let search sc = do
+        ce <- getClassEntry sc
+        case M.lookup m (ce^.fields) of
+          Nothing -> case ce^.super of
+            Nothing -> throwError $ noSuchField c m
+            Just x -> search x
+          Just x -> pure x
+  in search c
+
+tcMethod :: Id -> Id -> Typechecker (Type, [Type])
+tcMethod c m =
+  let search sc = do
+        ce <- getClassEntry sc
+        case M.lookup m (ce^.methods) of
+          Nothing -> case ce^.super of
+            Nothing -> throwError $ noSuchMethod c m
+            Just x -> search x
+          Just x -> pure x
+  in search c
+
+tcConstructor :: Id -> Maybe Id -> Typechecker [Type]
+tcConstructor c m = do
+  ce <- getClassEntry c
+  case M.lookup m (ce^.constructors) of
+    Nothing -> throwError $ noSuchConstructor c m
+    Just ts -> pure ts
 
 matchTypes :: Type -> Type -> Typechecker ()
 matchTypes a b = case (a, b) of
@@ -126,26 +169,53 @@ tcUnOp o t = case o of
 
 tcExpr :: Expr 'Untyped -> Typechecker (Expr 'Typed)
 tcExpr = \case
-  ELit ann () l -> case l of
-    LInt i -> pure $ ELit ann TInt (LInt i)
-    LString s -> pure $ ELit ann TString (LString s)
-    LBool b -> pure $ ELit ann TBool (LBool b)
-  EVar ann () v -> tcVar v >>= \t -> pure $ EVar ann t v
-  EApp ann () fname args -> do
+  ELit a () l -> case l of
+    LInt i -> pure $ ELit a TInt (LInt i)
+    LString s -> pure $ ELit a TString (LString s)
+    LBool b -> pure $ ELit a TBool (LBool b)
+  EVar a () v -> tcVar v >>= \t -> pure $ EVar a t v
+  EApp a () fname as -> do
     (rett, argst) <- tcFun fname
-    typedArgs <- mapM tcExpr args
+    typedArgs <- mapM tcExpr as
+    when (length as /= length argst) $
+      throwError $ argNumMismatch (length argst) (length as)
     forM_ (zip argst typedArgs) $ \(expected, typed) ->
       assertType expected typed
-    pure $ EApp ann rett fname typedArgs
-  EUnOp ann () o v -> do
+    pure $ EApp a rett fname typedArgs
+  EUnOp a () o v -> do
     vt <- tcExpr v
     rt <- tcUnOp o (getExprDec vt)
-    pure $ EUnOp ann rt o vt
-  EOp ann () o l r -> do
+    pure $ EUnOp a rt o vt
+  EOp a () o l r -> do
     tl <- tcExpr l
     tr <- tcExpr r
     tres <- tcOp o (getExprDec tl) (getExprDec tr)
-    pure $ EOp ann tres o tl tr
+    pure $ EOp a tres o tl tr
+  EProj a () e i -> do
+    et <- tcExpr e
+    case getExprDec et of
+      TClass c -> do
+        t <- tcField c i
+        pure $ EProj a t et i
+      t -> throwError $ notAClass t
+  EMApp a () e i as -> do
+    et <- tcExpr e
+    case getExprDec et of
+      TClass c -> do
+        (rt, argst) <- tcMethod c i
+        typedArgs <- mapM tcExpr as
+        when (length as /= length argst) $
+          throwError $ argNumMismatch (length argst) (length as)
+        forM_ (zip argst typedArgs) $ \(expected, typed) ->
+          assertType expected typed
+        pure $ EMApp a rt et i typedArgs
+      t -> throwError $ notAClass t
+  ENew a () c i as -> do
+    argst <- tcConstructor c i
+    typedArgs <- mapM tcExpr as
+    forM_ (zip argst typedArgs) $ \(expected, typed) ->
+      assertType expected typed
+    pure $ ENew a (TClass c) c i typedArgs
 
 
 currentRetType :: Typechecker Type
@@ -155,99 +225,175 @@ currentRetType = maybe (error "fun env not in a funtion") id <$>
 
 tcStmt :: Stmt 'Untyped -> Typechecker (Stmt 'Typed)
 tcStmt = \case
-  SDecl ann t v k -> do
-    local (over definedVars (M.insert v t)) $ SDecl ann t v <$> tcStmt k
-  SAssg ann v e k -> do
+  SDecl a t v k -> do
+    local (over definedVars (M.insert v t)) $ SDecl a t v <$> tcStmt k
+  SAssg a v e k -> do
     et <- tcExpr e
     vt <- tcVar v
     assertType vt et
-    SAssg ann v et <$> tcStmt k
-  SIncr ann v k -> do
+    SAssg a v et <$> tcStmt k
+  SIncr a v k -> do
     vt <- tcVar v
     matchTypes TInt vt
-    SIncr ann v <$> tcStmt k
-  SDecr ann v k -> do
+    SIncr a v <$> tcStmt k
+  SDecr a v k -> do
     vt <- tcVar v
     matchTypes TInt vt
-    SDecr ann v <$> tcStmt k
-  SCond ann c t k -> do
+    SDecr a v <$> tcStmt k
+  SCond a c t k -> do
     ct <- tcExpr c
     assertType TBool ct
     tt <- tcStmt t
-    SCond ann ct tt <$> tcStmt k
-  SCondElse ann c t e k -> do
+    SCond a ct tt <$> tcStmt k
+  SCondElse a c t e k -> do
     ct <- tcExpr c
     assertType TBool ct
     tt <- tcStmt t
     et <- tcStmt e
-    SCondElse ann ct tt et <$> tcStmt k
-  SWhile ann c b k -> do
+    SCondElse a ct tt et <$> tcStmt k
+  SWhile a c b k -> do
     ct <- tcExpr c
     assertType TBool ct
     bt <- tcStmt b
-    SWhile ann ct bt <$> tcStmt k
-  SExp ann e k -> do
+    SWhile a ct bt <$> tcStmt k
+  SExp a e k -> do
     et <- tcExpr e
-    SExp ann et <$> tcStmt k
-  SRet ann e k -> do
+    SExp a et <$> tcStmt k
+  SRet a e k -> do
     et <- tcExpr e
     rt <- currentRetType
     assertType rt et
-    SRet ann et <$> tcStmt k
-  SVRet ann k -> do
+    SRet a et <$> tcStmt k
+  SVRet a k -> do
     rt <- currentRetType
     matchTypes rt TVoid
-    SVRet ann <$> tcStmt k
-  SBlock ann b k ->
-    SBlock ann <$> tcStmt b <*> tcStmt k
-  SEmpty ann -> pure $ SEmpty ann
+    SVRet a <$> tcStmt k
+  SBlock a b k ->
+    SBlock a <$> tcStmt b <*> tcStmt k
+  SEmpty a -> pure $ SEmpty a
 
 
 isReturning :: Stmt a -> Bool
 isReturning = \case
-  SDecl ann t decls k -> isReturning k
-  SAssg ann v e k -> isReturning k
-  SIncr ann v k -> isReturning k
-  SDecr ann v k -> isReturning k
-  SCond ann c t k -> isReturning k
-  SCondElse ann c t e k ->
+  SDecl _a _t _decls k -> isReturning k
+  SAssg _a _v _e k -> isReturning k
+  SIncr _a _v k -> isReturning k
+  SDecr _a _v k -> isReturning k
+  SCond _a _c _t k -> isReturning k
+  SCondElse _a _c t e k ->
     (isReturning t && isReturning e) || isReturning k
-  SWhile ann c b k -> isReturning k
-  SExp ann e k -> isReturning k
-  SRet ann e _ -> True
-  SVRet ann _ -> True
-  SBlock ann b k ->
+  SWhile _a (ELit _ _ (LBool True)) b _k -> isReturning b
+  SWhile _a _c _b k -> isReturning k
+  SExp _a (EApp _ _ (Id "error") _) _k -> True
+  SExp _a _e k -> isReturning k
+  SRet _a _e _ -> True
+  SVRet _a _ -> True
+  SBlock _a b k ->
     isReturning b || isReturning k
   SEmpty _ -> False
 
 buildClassEntry :: ClassDef 'Untyped -> ClassEntry
 buildClassEntry c = ClassEntry
   { _ceSuper = c ^. super
-  , _ceFields = M.fromList $
-                [(i, t) | (CMField f) <- c^.body, let t = f^.ty, (i, _) <- NE.toList (f^.assignments)]
+  , _ceFields = M.fromList
+                [(i, t) | (CMField f) <- c^.body
+                        , let t = f^.ty
+                        , (i, _) <- NE.toList (f^.assignments)
+                        ]
+  , _ceMethods = M.fromList
+                 [(i, (rt, as)) | (CMMethod m) <- c^.body
+                          , let as = fmap (^.ty) $ m^.args
+                                rt = m^.retType
+                                i = m^.name
+                          ]
+  , _ceConstructors = M.fromList
+    [(i, as) | (CMConstructor co) <- c^.body
+             , let as = fmap (^.ty) $ co^.args
+                   i = co^.name
+             ]
   }
 
 buildInitialEnv :: [TopDef 'Untyped] -> Except String TypecheckerEnv
 buildInitialEnv =
   foldM (\prev d ->
            case d of
-             TDFun (FunDef _ rt fn args _) -> pure $
-               over definedFuns (M.insert fn (rt, fmap (^.ty) args)) prev
+             TDFun fdef -> pure $
+               over definedFuns (M.insert (fdef^.name) (fdef^.retType, fmap (^.ty) (fdef^.args))) prev
              TDClass cd -> pure $ over classEnv (M.insert (cd^.name) (buildClassEntry cd)) prev
-        ) emptyEnv
+        ) initialEnv
 
 
 tcTopDef :: TopDef 'Untyped -> Typechecker (TopDef 'Typed)
 tcTopDef = \case
-  TDFun (FunDef ann rt fname args body) -> do
-    let addArgEnv = flip M.union
-          (M.fromList $ fmap (\(Arg _ t n) -> (n, t)) args)
-    when (not $ isReturning body) $ throwError noReturn
-    tbody <- local (over definedVars addArgEnv . set retType (Just rt)) (tcStmt body)
-    pure $ TDFun $ FunDef ann rt fname args tbody
+  TDFun fdef -> do
+    let addArgEnv =
+          flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (fdef^.args))
+    when (not $ isReturning (fdef^.body)) $ throwError noReturn
+    let bodyEnv = (over definedVars addArgEnv . set retType (Just $ fdef^.retType))
+    tbody <- local bodyEnv (tcStmt $ fdef^.body)
+    pure $ TDFun $ FunDef (fdef^.ann) (fdef^.retType) (fdef^.name) (fdef^.args) tbody
+  TDClass cdef -> do
+    let tcMember :: ClassMember 'Untyped -> Typechecker (ClassMember 'Typed)
+        tcMember = \case
+          CMMethod mdef -> do
+            let addArgEnv =
+                  flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (mdef^.args))
+            when (maybe False (not . isReturning) (mdef^.body)) $ throwError noReturn
+            let setBodyEnv = over definedVars addArgEnv .
+                             set retType (Just $ mdef^.retType) .
+                             set currentFun (Just $ mdef^.name) .
+                             set currentClass (Just $ cdef^.name)
+            tbody <- case mdef^.body of
+              Nothing -> pure Nothing
+              Just b -> Just <$> local setBodyEnv (tcStmt b)
+            pure $ CMMethod $ Method
+              { _methodAnn = mdef^.ann
+              , _methodAccess = mdef^.access
+              , _methodPlace = mdef^.place
+              , _methodRetType = mdef^.retType
+              , _methodName = mdef^.name
+              , _methodArgs = mdef^.args
+              , _methodBody = tbody
+              }
+          CMField fdef -> do
+            tassgs <- forM (fdef^.assignments) $ \(i, mv) ->
+              case mv of
+                Nothing -> return (i, Nothing)
+                Just v -> do
+                  let setBodyEnv = set currentClass (Just $ cdef^.name)
+                  vt <- local setBodyEnv (tcExpr v)
+                  assertType (fdef^.ty) vt
+                  return (i, Just vt)
+            pure $ CMField $ Field
+              { _fieldAnn = fdef^.ann
+              , _fieldAccess = fdef^.access
+              , _fieldPlace = fdef^.place
+              , _fieldTy = fdef^.ty
+              , _fieldAssignments = tassgs
+              }
+          CMConstructor codef -> do
+            let addArgEnv =
+                  flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (codef^.args))
+            when (not $ isReturning (codef^.body)) $ throwError noReturn
+            let setBodyEnv = over definedVars addArgEnv .
+                             set retType (Just $ TClass (cdef^.name)) .
+                             set currentFun (codef^.name <|> Just (Id "constructor")) .
+                             set currentClass (Just $ cdef^.name)
+            tbody <- local setBodyEnv (tcStmt (codef^.body))
+            pure $ CMConstructor $ Constructor
+              { _constructorAnn = codef^.ann
+              , _constructorAccess = codef^.access
+              , _constructorName = codef^.name
+              , _constructorArgs = codef^.args
+              , _constructorBody = tbody
+              }
+    members <- mapM tcMember (cdef^.body)
+    pure $ TDClass $ ClassDef (cdef^.ann) (cdef^.name) (cdef^.super) members
 
+tcProgram :: Program 'Untyped -> Typechecker (Program 'Typed)
+tcProgram (Program defs) = Program <$> mapM tcTopDef defs
 
-tcProgram :: Program 'Untyped -> Either String (Program 'Typed)
-tcProgram (Program defs) = runExcept $ do
+typecheck :: Program 'Untyped -> Either String (ClassEnv, Program 'Typed)
+typecheck p@(Program defs) = runExcept $ do
   env <- buildInitialEnv defs
-  runReaderT (Program <$> mapM tcTopDef defs) env
+  runReaderT ((,) (env^.classEnv) <$> tcProgram p) env

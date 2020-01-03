@@ -12,6 +12,7 @@ module Latte.Frontend.AST where
 
 import Data.String
 import Data.List.NonEmpty(NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Text.PrettyPrint.HughesPJClass
 import GHC.TypeNats(Nat, type (+))
 import Control.Lens
@@ -115,6 +116,7 @@ data RawExpr (l :: Nat) where
   REMApp  :: Ann -> RawExpr 6 -> Id -> [RawExpr 0]    -> RawExpr 6
   RELit   :: Ann -> Lit                               -> RawExpr 7
   REApp   :: Ann -> Id -> [RawExpr 0]                 -> RawExpr 7
+  RENew   :: Ann -> Id -> Maybe Id -> [RawExpr 0]     -> RawExpr 7
   REVar   :: Ann -> Id                                -> RawExpr 7
   REPar   :: Ann -> RawExpr 0                         -> RawExpr 7
   RECoe   ::        RawExpr (n + 1)                   -> RawExpr n
@@ -151,6 +153,7 @@ data Expr (s :: Stage) where
   EOp   :: Ann -> ExprDecoration s -> AnyOp -> Expr s -> Expr s -> Expr s
   EProj :: Ann -> ExprDecoration s -> Expr s -> Id -> Expr s
   EMApp :: Ann -> ExprDecoration s -> Expr s  -> Id -> [Expr s] -> Expr s
+  ENew :: Ann -> ExprDecoration s -> Id -> Maybe Id -> [Expr s] -> Expr s
 
 
 data Stmt (e :: Stage)
@@ -179,10 +182,12 @@ entailExpr = \case
   RENot   ann e -> EUnOp ann () Not (entailExpr e)
   RELit   ann l -> ELit ann () l
   REApp   ann f args -> EApp ann () f (map entailExpr args)
+  RENew   ann c f args -> ENew ann () c f (map entailExpr args)
   REVar   ann v -> EVar ann () v
   REPar   _ e -> entailExpr e
   RECoe   e -> entailExpr e
-  _ -> error "TODO ee"
+  REProj  ann e i -> EProj ann () (entailExpr e) i
+  REMApp  ann e i as -> EMApp ann () (entailExpr e) i (map entailExpr as)
 
 entailStmt :: RawStmt -> Stmt 'Untyped
 entailStmt s =
@@ -221,7 +226,9 @@ getExprDec = \case
   EApp _ a _ _ -> a
   EUnOp _ a _ _ -> a
   EOp  _ a _ _ _ -> a
-  _ -> error "XD"
+  EProj _ a _ _ -> a
+  EMApp _ a _ _ _ -> a
+  ENew _ a _ _ _ -> a
 
 data FunDef (s :: Stage) = FunDef
   { _fundefAnn :: Ann
@@ -241,17 +248,6 @@ data ClassDef (s :: Stage) = ClassDef
 data TopDef (s :: Stage)
   = TDFun (FunDef s)
   | TDClass (ClassDef s)
-
--- instance Pretty (TopDef 'Untyped) where
---   pPrint = \case
---     TopFun{tdType = t, tdId = i, tdArgs = args, tdFunBody = body} ->
---       pPrint t <+> pPrint i <> paren (cat $ punctuate comma $ map pPrint args) <+> lbrac $+$
---       block (pPrint body) $+$
---       rbrac
---     Class{tdId = i, tdSuper = sup, tdClassBody = body} ->
---       "class" <+> pPrint i <+> maybe empty (("extends" <+>) . pPrint) sup <+> lbrac $+$
---       block (empty) $+$ -- TODO
---       rbrac
 
 data Method (s :: Stage) = Method
   { _methodAnn :: Ann
@@ -338,8 +334,7 @@ instance Pretty Type where
 instance Pretty (Expr a) where
   pPrintPrec k prc = \case
     ELit _ _ l -> pPrint l
-    EApp _ _ f as -> pPrint f <>
-                        parens (cat $ punctuate comma $ map pPrint as)
+    EApp _ _ f as -> pPrint f <> parens (cat $ punctuate comma $ map pPrint as)
     EVar _ _ v -> pPrint v
     EUnOp _ _ o e -> pPrint o <> pPrint e
     EOp  _ _ o l r ->
@@ -362,6 +357,8 @@ instance Pretty (Expr a) where
     EProj _ _ e i -> pPrint e <> "." <> pPrint i
     EMApp _ _ e m as -> pPrint e <> "." <> pPrint m <>
                            parens (cat $ punctuate comma $ map pPrint as)
+    ENew _ _ cl cr as -> "new" <+> pPrint cl <> maybe empty (\n -> "." <> pPrint n) cr <>
+      parens (cat $ punctuate comma $ map pPrint as)
 
 block :: Doc -> Doc
 block b = lbrace $+$ nest 2 b $+$ rbrace
@@ -391,6 +388,50 @@ instance Pretty (FunDef a) where
 instance Pretty (TopDef a) where
   pPrint = \case
     TDFun f -> pPrint f
+    TDClass c -> pPrint c
+
+instance Pretty (ClassDef a) where
+  pPrint c = "class" <+> pPrint (c^.name) <+> maybe empty (("extends" <+>) . pPrint) (c^.super) <+>
+    block ( vcat $ map pPrint (c^.body))
+
+instance Pretty (ClassMember a) where
+  pPrint = \case
+    CMMethod m -> pPrint m
+    CMField f -> pPrint f
+    CMConstructor c -> pPrint c
+
+instance Pretty (Method a) where
+  pPrint md =
+    pPrint (md^.place) <+> pPrint (md^.access) <+>
+    pPrint (md^.retType) <+> pPrint (md^.name) <>
+    parens (cat $ punctuate comma $ map pPrint $ md^.args) <+>
+    block (maybe empty pPrint (md^.body))
+
+instance Pretty (Field a) where
+  pPrint f =
+    pPrint (f^.place) <+> pPrint (f^.access) <+>
+    pPrint (f^.ty) <+>
+    cat (punctuate comma (map (\(i, mv) ->
+                                  pPrint i <+> maybe empty (\v -> "=" <+> pPrint v) mv)
+                           (NE.toList $ f^.assignments))) <>
+    semi
+
+instance Pretty (Constructor a) where
+  pPrint c =
+    "new" <+>
+    maybe empty pPrint (c^.name) <>
+    parens (cat $ punctuate comma $ map pPrint $ c^.args) <+>
+    block (pPrint (c^.body))
+
+instance Pretty ClassMemberPlace where
+  pPrint = \case
+    Dynamic -> empty
+    Static -> "static"
+
+instance Pretty ClassMemberAccess where
+  pPrint = \case
+    Private -> empty
+    Public -> "public"
 
 instance Pretty (Program a) where
   pPrint (Program defs) = vcat $ map pPrint defs

@@ -11,21 +11,21 @@ import Data.Text(pack)
 
 testX86 :: String -> IO ()
 testX86 s =
-  case runLatteParser program "test" (pack s) >>= tcProgram of
+  case runLatteParser program "test" (pack s) >>= typecheck of
     Left e -> putStrLn e
-    Right p -> putStrLn $ pp (X86.compile $ compile p)
+    Right (ce, p) -> putStrLn $ pp (X86.compile $ compile ce p)
 
 testIR :: String -> IO ()
 testIR s =
-  case runLatteParser program "test" (pack s) >>= tcProgram of
+  case runLatteParser program "test" (pack s) >>= typecheck of
     Left e -> putStrLn e
-    Right p -> putStrLn $ pp (compile p)
+    Right (ce, p) -> putStrLn $ pp (compile ce p)
 
 testAST :: String -> IO ()
 testAST s =
-  case runLatteParser program "test" (pack s) >>= tcProgram of
+  case runLatteParser program "test" (pack s) >>= typecheck of
     Left e -> putStrLn e
-    Right p -> putStrLn $ pp p
+    Right (_, p) -> putStrLn $ pp p
 
 e0 :: String
 e0 = "int f(int x) { if (true) {return 2 + 2;} return 1;}"
@@ -41,3 +41,6 @@ eFactR = "int f(int x) { if (x < 2) return 1; return x * f(x - 1); }"
 
 eFactI :: String
 eFactI = "int f(int x) { int n = 1; while(x > 1) { n = n*x; x--;} return n; }"
+
+eStruct :: String
+eStruct = "class dup { public int f; } int f(dup d) { return d.f; }"
