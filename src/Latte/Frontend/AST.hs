@@ -46,6 +46,7 @@ data Type
   | TBool
   | TString
   | TClass Id
+  deriving (Eq)
 
 
 data Arg = Arg

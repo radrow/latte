@@ -1,7 +1,9 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Latte.Frontend.Typechecker where
 
@@ -10,10 +12,12 @@ import Latte.Frontend.Error
 
 import Data.Functor
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.Map(Map)
 import qualified Data.List.NonEmpty as NE
 import Control.Applicative
 import Control.Monad.Except
+import Control.Monad.State
 import Control.Monad.Reader
 import Control.Lens
 
@@ -38,30 +42,32 @@ data ClassEntry = ClassEntry
 
 
 data TypecheckerEnv = TypecheckerEnv
-  { _teDefinedVars  :: VarEnv
-  , _teDefinedFuns  :: FunEnv
-  , _teCurrentFun   :: Maybe Id
-  , _teCurrentClass :: Maybe Id
-  , _teClassEnv     :: ClassEnv
-  , _teLoc          :: Ann
-  , _teRetType      :: Maybe Type
+  { _teDefinedVars      :: VarEnv
+  , _teDefinedFuns      :: FunEnv
+  , _teCurrentFun       :: Maybe Id
+  , _teCurrentClass     :: Maybe Id
+  , _teClassEnv         :: ClassEnv
+  , _teLoc              :: Ann
+  , _teRetType          :: Maybe Type
+  , _teCurrentScopeVars :: S.Set Id
   }
 
 initialEnv :: TypecheckerEnv
 initialEnv = TypecheckerEnv
-  { _teDefinedVars  = M.singleton "void" TVoid
-  , _teDefinedFuns  = M.fromList $
+  { _teDefinedVars      = M.singleton "void" TVoid
+  , _teDefinedFuns      = M.fromList $
     [ ("printInt", (TVoid, [TInt]))
     , ("printString", (TVoid, [TString]))
     , ("readInt", (TInt, []))
     , ("readString", (TString, []))
     , ("error", (TVoid, []))
     ]
-  , _teCurrentFun   = Nothing
-  , _teCurrentClass = Nothing
-  , _teClassEnv     = M.empty
-  , _teLoc          = fakeAnn
-  , _teRetType      = Nothing
+  , _teCurrentFun       = Nothing
+  , _teCurrentClass     = Nothing
+  , _teClassEnv         = M.empty
+  , _teLoc              = fakeAnn
+  , _teRetType          = Nothing
+  , _teCurrentScopeVars = S.empty
   }
 
 makeLensesWith abbreviatedFields ''TypecheckerEnv
@@ -223,11 +229,17 @@ currentRetType :: Typechecker Type
 currentRetType = maybe (error "fun env not in a funtion") id <$>
   view retType
 
+newScope :: Typechecker a -> Typechecker a
+newScope = local (set currentScopeVars S.empty)
 
 tcStmt :: Stmt 'Untyped -> Typechecker (Stmt 'Typed)
 tcStmt = \case
   SDecl a t v k -> do
-    local (over definedVars (M.insert v t)) $ SDecl a t v <$> tcStmt k
+    vars <- view currentScopeVars
+    when (S.member v vars) $
+      throwError $ duplicateVar v
+    local (over definedVars (M.insert v t) . over currentScopeVars (S.insert v)) $
+      SDecl a t v <$> tcStmt k
   SAssg a v e k -> do
     et <- tcExpr e
     vt <- tcVar v
@@ -253,18 +265,18 @@ tcStmt = \case
   SCond a c t k -> do
     ct <- tcExpr c
     assertType TBool ct
-    tt <- tcStmt t
+    tt <- newScope $ tcStmt t
     SCond a ct tt <$> tcStmt k
   SCondElse a c t e k -> do
     ct <- tcExpr c
     assertType TBool ct
-    tt <- tcStmt t
-    et <- tcStmt e
+    tt <- newScope $ tcStmt t
+    et <- newScope $ tcStmt e
     SCondElse a ct tt et <$> tcStmt k
   SWhile a c b k -> do
     ct <- tcExpr c
     assertType TBool ct
-    bt <- tcStmt b
+    bt <- newScope $ tcStmt b
     SWhile a ct bt <$> tcStmt k
   SExp a e k -> do
     et <- tcExpr e
@@ -279,7 +291,7 @@ tcStmt = \case
     matchTypes rt TVoid
     SVRet a <$> tcStmt k
   SBlock a b k ->
-    SBlock a <$> tcStmt b <*> tcStmt k
+    SBlock a <$> (newScope $ tcStmt b) <*> tcStmt k
   SEmpty a -> pure $ SEmpty a
 
 
@@ -325,13 +337,33 @@ buildClassEntry c = ClassEntry
   }
 
 buildInitialEnv :: [TopDef 'Untyped] -> Except String TypecheckerEnv
-buildInitialEnv =
+buildInitialEnv defs = do
+  when (null [() | TDFun fdef <- defs, fdef^.name == "main"]) $
+    throwError noMain
   foldM (\prev d ->
            case d of
-             TDFun fdef -> pure $
-               over definedFuns (M.insert (fdef^.name) (fdef^.retType, fmap (^.ty) (fdef^.args))) prev
-             TDClass cd -> pure $ over classEnv (M.insert (cd^.name) (buildClassEntry cd)) prev
-        ) initialEnv
+             TDFun fdef -> do
+               when (fdef^.name == "main" && (fdef^.retType /= TInt || not (null $ fdef^.args))) $
+                 throwError mainType
+               when (fdef^.name `elem` (M.keys $ prev^.definedFuns)) $
+                 throwError $ duplicateFun (fdef^.name)
+               pure $
+                 over definedFuns (M.insert (fdef^.name) (fdef^.retType, fmap (^.ty) (fdef^.args))) prev
+             TDClass cd -> do
+               when (cd^.name `elem` (M.keys $ prev^.classEnv)) $
+                 throwError $ duplicateClass (cd^.name)
+               let ce = buildClassEntry cd
+                   checkDups :: (MonadError String m, Ord s)
+                             => [x] -> (x -> s) -> (s -> String) -> m ()
+                   checkDups vals getname err = flip evalStateT S.empty $ forM_ vals $ \f -> do
+                     jeb <- gets $ S.member (getname f)
+                     when jeb $ throwError $ err (getname f)
+                     modify $ S.insert (getname f)
+               checkDups [f | CMField fd <- cd^.body, (f, _) <- NE.toList $ fd^.assignments ] id duplicateField
+               checkDups [m | CMMethod m <- cd^.body ] (^.name) duplicateMethod
+               checkDups [c | CMConstructor c <- cd^.body ] (^.name) duplicateConstructor
+               pure $ over classEnv (M.insert (cd^.name) ce) prev
+        ) initialEnv defs
 
 
 tcTopDef :: TopDef 'Untyped -> Typechecker (TopDef 'Typed)
@@ -367,7 +399,7 @@ tcTopDef = \case
               , _methodBody = tbody
               }
           CMField fdef -> do
-            tassgs <- forM (fdef^.assignments) $ \(i, mv) ->
+            tassgs <- forM (fdef^.assignments) $ \(i, mv) -> do
               case mv of
                 Nothing -> return (i, Nothing)
                 Just v -> do

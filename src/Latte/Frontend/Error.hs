@@ -5,12 +5,37 @@ import Latte.Frontend.AST
 emph :: String -> String
 emph s = "\x1b[1m" <> s <> "\x1b[0m"
 
+mainType :: String
+mainType = "plz man cant u into c? ? ? " <> emph "main" <> " muzzt B " <> emph "int main()"
+
+noMain :: String
+noMain = emph "main" <> " where r u"
+
 typeMatchError :: Type -> Type -> String
 typeMatchError t1 t2 =
   "Opsie Whoopsie x_x I kant metch typz!! me wnted " <> emph (pp t1) <> " but @daddy@ giv " <> emph (pp t2) <> " but thx anyway Xoxox"
 
 argNumMismatch :: Int -> Int -> String
 argNumMismatch want giv = "boiiii cant you count. I wnt " <> emph (show want) <> " argz and u gib me " <> emph (show giv)
+
+duplicateVar :: Id -> String
+duplicateVar i = "why r u doin " <> emph (pp i) <> " too much"
+
+duplicateFun :: Id -> String
+duplicateFun i = "i know " <> emph (pp i) <> ". gimme some other boi lol"
+
+duplicateClass :: Id -> String
+duplicateClass i = "ok man. i get u looooooooov xoxoxox " <> emph (pp i) <> " but 1 is just enough"
+
+duplicateField :: Id -> String
+duplicateField i = "field field bald field, u know like in thiz song. too much " <> emph (pp i) <> " btw"
+
+duplicateMethod :: Id -> String
+duplicateMethod i = "MAN WHAT THE F XDXDXDDDD WHY SECOND " <> emph (pp i) <> " WTF WHY X'DD"
+
+duplicateConstructor :: Maybe Id -> String
+duplicateConstructor (Just i) = "Your constructor " <> emph (pp i) <> " seems to be redefined sir."
+duplicateConstructor Nothing = "Your unnamed constructor seems to be redefined sir."
 
 classMatchError :: Id -> Id -> String
 classMatchError Id{iName = c1} Id{iName = c2} =
