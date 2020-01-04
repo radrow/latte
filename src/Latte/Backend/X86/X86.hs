@@ -50,11 +50,12 @@ data Instr where
   Push :: Operand -> Instr
   Pop :: Operand -> Instr
   Mov :: Operand -> Operand -> Instr
+  Cdq :: Instr
 
   Add :: Operand -> Operand -> Instr
   Sub :: Operand -> Operand -> Instr
-  Imul :: Operand -> Operand -> Instr
-  Idiv :: Operand -> Operand -> Instr
+  Imul :: Operand -> Instr
+  Idiv :: Operand -> Instr
   Not :: Operand -> Instr
   Or :: Operand -> Operand -> Instr
   And :: Operand -> Operand -> Instr
@@ -154,17 +155,20 @@ pop o = tell [Pop o]
 mov :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 mov l r = tell [Mov l r]
 
+cdq :: MonadWriter [Instr] m => m ()
+cdq = tell [Cdq]
+
 add :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 add l r = tell [Add l r]
 
 sub :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 sub l r = tell [Sub l r]
 
-imul ::  MonadWriter [Instr] m => Operand -> Operand -> m ()
-imul l r = tell [Imul l r]
+imul ::  MonadWriter [Instr] m => Operand -> m ()
+imul l = tell [Imul l]
 
-idiv :: MonadWriter [Instr] m => Operand -> Operand -> m ()
-idiv l r = tell [Idiv l r]
+idiv :: MonadWriter [Instr] m => Operand -> m ()
+idiv l = tell [Idiv l]
 
 neg :: MonadWriter [Instr] m => Operand -> m ()
 neg l = tell [Neg l]
@@ -341,11 +345,12 @@ instance Pretty Instr where
     Push a -> "pushl" <+> pPrint a
     Pop a -> "popl" <+> pPrint a
     Mov a b -> "movl" <+> pPrint a <> comma <+> pPrint b
+    Cdq -> "cdq"
 
     Add a b -> "add" <+> pPrint a <> comma <+> pPrint b
     Sub a b -> "sub" <+> pPrint a <> comma <+> pPrint b
-    Imul a b -> "imul" <+> pPrint a <> comma <+> pPrint b
-    Idiv a b -> "idiv" <+> pPrint a <> comma <+> pPrint b
+    Imul a -> "imul" <+> pPrint a
+    Idiv a -> "idiv" <+> pPrint a
     Neg a -> "neg" <+> pPrint a
     Or a b -> "or" <+> pPrint a <> comma <+> pPrint b
     And a b -> "and" <+> pPrint a <> comma <+> pPrint b

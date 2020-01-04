@@ -86,9 +86,24 @@ cNOp :: IR.NumOp -> Operand -> Operand -> Compiler ()
 cNOp = \case
   IR.Add -> add
   IR.Sub -> sub
-  IR.Mul -> imul
-  IR.Div -> idiv
-  IR.Mod -> error "TODO KUXWA OPERATORY"
+  IR.Mul -> \a b -> do
+    mov b eax
+    mov a ecx
+    cdq
+    imul ecx
+    mov eax b
+  IR.Div -> \a b -> do
+    mov b eax
+    mov a ecx
+    cdq
+    idiv ecx
+    mov eax b
+  IR.Mod -> \a b -> do
+    mov b eax
+    mov a ecx
+    cdq
+    idiv ecx
+    mov edx b
   IR.And -> and
   IR.Or  -> or
 
