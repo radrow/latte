@@ -45,5 +45,11 @@ eFactI = "int f(int x) { int n = 1; while(x > 1) { n = n*x; x--;} return n; }"
 eStruct :: String
 eStruct = "class dup { int f; int g;} dup f(dup d) { dup p; p.f = d.f + d.g; p.g = 10; return p; } int main() { dup d; d.f = 21; d.g = 34; printInt(f(d).f); return 0; }"
 
-es :: String
-es = "class dup { int f; } dup f() {dup d; d.f = 123}"
+eStruct2 :: String
+eStruct2 = unlines
+  [ "class point { int x, y; }"
+  , "class line { point p1, p2; }"
+  , "int len(line l) { int dx = l.p1.x - l.p2.x, dy = l.p1.y - l.p2.y; return dx*dx+dy*dy; }"
+  , "int main() { point p1, p2; p1.x = 1; p1.y = 1; p2.x = 2; p2.y = 11; line l;"
+  , "l.p1 = p1; l.p2 = p2; printInt(len(l)); return 1; }"
+  ]

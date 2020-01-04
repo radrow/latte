@@ -28,7 +28,7 @@ data Env = Env
   }
 data St = St
   { _stSupply :: Int
-  , _stStrings :: S.Set String
+  , _stStrings :: M.Map String String
   }
 
 type Compiler = RWS Env [Instr] St
@@ -57,8 +57,11 @@ makeStrName s = do
   i <- nextSup
   return $ "local_str_" ++ filter isAlphaNum s ++ "_" ++ show i
 
-requestStr :: String -> Compiler ()
-requestStr s = modify $ over strings (S.insert s)
+requestStr :: String -> Compiler String
+requestStr s = do
+  v <- makeStrName s
+  modify $ over strings (M.insert s v)
+  return v
 
 cConst :: IR.Const -> Operand -> Compiler ()
 cConst ic o = case ic of
@@ -72,8 +75,7 @@ cConst ic o = case ic of
   IR.CInt i -> do
     mov (OConst i) o
   IR.CStr s -> do
-    requestStr s
-    sn <- makeStrName s
+    sn <- requestStr s
     if isReg o
       then mov (OVar sn) o
       else do
@@ -86,6 +88,7 @@ cNOp = \case
   IR.Sub -> sub
   IR.Mul -> imul
   IR.Div -> idiv
+  IR.Mod -> error "TODO KUXWA OPERATORY"
   IR.And -> and
   IR.Or  -> or
 
@@ -224,12 +227,11 @@ cRoutine (IR.Routine (IR.Label rname) args blocks) = do
     sub (OConst $ fromIntegral $ length locals * 4) esp
     forM_ blocks cBlock
 
-compileStrings :: S.Set String -> Compiler ()
-compileStrings strs = forM_ strs $ \s -> do
-  vname <- makeStrName s
+compileStrings :: M.Map String String -> Compiler ()
+compileStrings strs = forM_ (M.toList strs) $ \(s, v) -> do
   l <- makeLabel ".LC"
   string s
-  label vname
+  label v
   long l
 
 cProgram :: IR.IR -> Compiler ()
@@ -240,4 +242,4 @@ cProgram (IR.IR routines) = do
 
 compile :: IR.IR -> Assembly
 compile ir = optimize $
-  Assembly $ snd $ evalRWS (cProgram ir) undefined (St 1 S.empty)
+  Assembly $ snd $ evalRWS (cProgram ir) undefined (St 1 M.empty)

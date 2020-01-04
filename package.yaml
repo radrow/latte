@@ -42,6 +42,11 @@ library:
     - ghc
     - pretty
     - hashtables
+    - file-embed
+    - bytestring
+    - directory
+    - filepath
+
 executables:
   lattec:
     main:                Main.hs
@@ -55,3 +60,6 @@ executables:
     - -Wno-implicit-prelude
     dependencies:
     - latte
+    - filepath
+    - process
+    - text
