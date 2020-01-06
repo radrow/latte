@@ -3,7 +3,7 @@ module Latte.Test where
 import Latte.Frontend.AST
 import Latte.Frontend.Parse
 import Latte.Frontend.Typechecker
-import Latte.Frontend.IR
+import qualified Latte.Frontend.IR as IR
 import qualified Latte.Backend.X86.Compile as X86
 
 
@@ -13,13 +13,15 @@ testX86 :: String -> IO ()
 testX86 s =
   case runLatteParser program "test" (pack s) >>= typecheck of
     Left e -> putStrLn e
-    Right (ce, p) -> putStrLn $ pp (X86.compile $ compile ce p)
+    Right (ce, p) -> putStrLn $ pp (uncurry (flip X86.compile) $ IR.compile ce p)
 
 testIR :: String -> IO ()
 testIR s =
   case runLatteParser program "test" (pack s) >>= typecheck of
     Left e -> putStrLn e
-    Right (ce, p) -> putStrLn $ pp (compile ce p)
+    Right (ce, p) ->
+      let (ir, mm) = IR.compile ce p
+      in putStrLn $ pp ir ++ "\n\n" ++ show mm
 
 testAST :: String -> IO ()
 testAST s =

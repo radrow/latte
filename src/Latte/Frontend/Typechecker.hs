@@ -420,15 +420,15 @@ tcTopDef = \case
             when (not $ isReturning (codef^.body)) $ throwError noReturn
             let setBodyEnv = over definedVars addArgEnv .
                              set retType (Just $ TClass (cdef^.name)) .
-                             set currentFun (codef^.name <|> Just (Id "constructor")) .
+                             set currentFun (codef^.name <|> Just (Id "unnamed constructor")) .
                              set currentClass (Just $ cdef^.name)
             tbody <- local setBodyEnv (tcStmt (codef^.body))
             pure $ CMConstructor $ Constructor
-              { _constructorAnn = codef^.ann
+              { _constructorAnn    = codef^.ann
               , _constructorAccess = codef^.access
-              , _constructorName = codef^.name
-              , _constructorArgs = codef^.args
-              , _constructorBody = tbody
+              , _constructorName   = codef^.name
+              , _constructorArgs   = codef^.args
+              , _constructorBody   = tbody
               }
     members <- mapM tcMember (cdef^.body)
     pure $ TDClass $ ClassDef (cdef^.ann) (cdef^.name) (cdef^.super) members

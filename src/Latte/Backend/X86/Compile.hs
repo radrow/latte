@@ -12,6 +12,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Lens
 import Control.Monad
+import Control.Monad.Fix
 import Control.Monad.RWS.Lazy hiding ((<>))
 import Control.Monad.State
 import Prelude hiding ((<>), or, and)
@@ -137,6 +138,9 @@ sizeOf = \case
   IR.TObj _ flds -> return $ (length flds + 1) * 4
   _ -> return 4
 
+makeMethodDispatcherName :: String -> String
+makeMethodDispatcherName s = "__" ++ s ++ "__dispatch"
+
 cExpr :: IR.Type -> Operand -> IR.Expr -> Compiler ()
 cExpr t vloc e = case e of
   IR.Const c ->
@@ -174,11 +178,19 @@ cExpr t vloc e = case e of
     mov eax vloc
   IR.NewObj -> do
     s <- sizeOf t
+    let IR.TObj idx _ = t
     push (OConst $ toInteger s)
     call (OLabel "malloc")
     add (OConst 4) esp
+    mov (OConst $ fromIntegral idx) (mem EAX)
     mov eax vloc
-
+  IR.VCall f as -> do
+    forM_ (reverse as) $ \a -> do
+      cConst a eax
+      push eax
+    call (OLabel $ makeMethodDispatcherName f)
+    add (OConst $ 4 * fromIntegral (length as + 1)) esp
+    mov eax vloc
 
 cInstr :: IR.Instr -> Compiler ()
 cInstr i = comment (AST.pp i) >> case i of
@@ -194,7 +206,7 @@ cInstr i = comment (AST.pp i) >> case i of
     mov eax (mem (0 :: Int) (ECX, EDX, 4 :: Int))
 
 cFinInstr :: IR.FinInstr -> Compiler ()
-cFinInstr i = case i of
+cFinInstr i = comment (AST.pp i) >> case i of
   IR.Ret Nothing -> ret
   IR.Ret (Just v) -> do
     cConst v eax
@@ -212,7 +224,8 @@ cFinInstr i = case i of
       cConst r ecx
       cmp ecx eax
       cROpJmp o ltrue lfalse
-  IR.Unreachable -> return ()
+  IR.Unreachable ->
+    call (OLabel "error")
 
 cBlock :: IR.Block -> Compiler ()
 cBlock (IR.Block (IR.Label bname) instrs fin) = do
@@ -242,6 +255,28 @@ cRoutine (IR.Routine (IR.Label rname) args blocks) = do
     sub (OConst $ fromIntegral $ length locals * 4) esp
     forM_ blocks cBlock
 
+cMethodDispatcher :: AST.Id -> M.Map String [Int] -> Compiler ()
+cMethodDispatcher m implMap = do
+  label (makeMethodDispatcherName $ AST.iName m)
+  push ebp
+  mov esp ebp
+  mov (mem (8 :: Int) EBP :: Operand) eax
+  mov (mem EAX) eax
+  forM_ (M.toList implMap) $ \(impl, cids) ->
+    void $ mfix $ \l -> do
+      void $ mfix $ \lf -> do
+        forM_ cids $ \cid -> do
+          mov (OConst $ fromIntegral cid) ecx
+          cmp eax ecx
+          je $ OLabel lf
+        jmp $ OLabel l
+        makeLabel "dispatch_found_"
+      call (OLabel impl)
+      leave
+      ret
+      makeLabel "dispatch_step_"
+  call (OLabel "error")
+
 compileStrings :: M.Map String String -> Compiler ()
 compileStrings strs = forM_ (M.toList strs) $ \(s, v) -> do
   l <- makeLabel ".LC"
@@ -255,6 +290,9 @@ cProgram (IR.IR routines) = do
   use strings >>= compileStrings
   return ()
 
-compile :: IR.IR -> Assembly
-compile ir = optimize $
-  Assembly $ snd $ evalRWS (cProgram ir) undefined (St 1 M.empty)
+compile :: IR.MethodMap -> IR.IR -> Assembly
+compile mm ir = optimize $
+  let act = do
+        cProgram ir
+        mapM (uncurry cMethodDispatcher) mm
+  in Assembly $ snd $ evalRWS act undefined (St 1 M.empty)

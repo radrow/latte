@@ -215,7 +215,15 @@ expr5 = choice
 expr6 :: Parser (AST.RawExpr 6)
 expr6 = do
   e <- AST.RECoe <$> expr7
-  choice [ try $ (pure e) >>= infixL (withAnn $ operator "." $> AST.REProj) ident
+  let proj = do
+        i <- ident
+        optional appliedArgs >>= \case
+          Nothing -> return $ Left i
+          Just as -> return $ Right (i, as)
+      fldOrMth a l r = case r of
+        Left i -> AST.REProj a l i
+        Right (i, as) -> AST.REMApp a l i as
+  choice [ try $ (pure e) >>= infixL (withAnn $ operator "." $> fldOrMth) proj
          , pure e
          ]
 
@@ -224,7 +232,7 @@ expr7 :: Parser (AST.RawExpr 7)
 expr7 = choice
   [ withAnnP AST.REPar <*> paren expr0
   , withAnnP AST.RELit <*> lit
-  , try $ withAnnP AST.REApp <*> ident <*> paren (sepBy expr0 (symbol ","))
+  , try $ withAnnP AST.REApp <*> ident <*> appliedArgs
   , withAnnP AST.RENew <*> (word "new" *> ident) <*> optional (symbol "." *> ident)
     <*> paren (sepBy expr0 (symbol ","))
   , withAnnP AST.REVar <*> ident
@@ -249,6 +257,8 @@ decls = sepBy1 decl (symbol ",")
 semicolon :: Parser ()
 semicolon = void $ symbol ";"
 
+appliedArgs :: Parser [AST.RawExpr 0]
+appliedArgs = paren (sepBy expr0 (symbol ","))
 
 stmt :: Parser AST.RawStmt
 stmt = choice

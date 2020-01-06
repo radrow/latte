@@ -12,12 +12,15 @@ import qualified Latte.Frontend.AST as AST
 import qualified Latte.Frontend.Typechecker as Tc
 
 import Text.PrettyPrint.HughesPJClass
+import Data.Maybe(catMaybes)
 import Data.String
+import Data.List(foldl', nub)
 import Data.Functor
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Monad.RWS hiding ((<>))
 import Control.Monad.Reader
+import Control.Monad.State
 import Control.Lens hiding (Const)
 import Prelude hiding ((<>))
 
@@ -50,7 +53,7 @@ data Expr
   | UnOp UnOp Const
   | Const Const
   | Call String [Const] -- result fname args
-  | VCall Int String [Const] -- result class_id fname args
+  | VCall String [Const]
   | NewObj
   | Proj Const Int
 
@@ -63,6 +66,8 @@ data Const = CVar VarId | CInt Integer | CStr String
 type VarMap = M.Map AST.Id VarId
 type TypeMap = M.Map VarId Type
 type FieldMap = M.Map (AST.Id, AST.Id) Int
+-- | [(method, implementation -> classes)]
+type MethodMap = [(AST.Id, M.Map String [Int])]
 
 data St = St
   { _stSupply :: Int
@@ -78,6 +83,7 @@ data Env = Env
   , _envBlockName    :: Label
   , _envNextBlock    :: Maybe Label
   , _envTopEnv       :: TopEnv
+  , _envCurrentClass :: Maybe AST.Id
   }
 initEnv :: Label -> Label -> TopCompiler Env
 initEnv r l = ask >>= \te -> pure Env
@@ -85,6 +91,7 @@ initEnv r l = ask >>= \te -> pure Env
   , _envBlockName = l
   , _envNextBlock = Nothing
   , _envTopEnv = te
+  , _envCurrentClass = Nothing
   }
 
 data TopEnv = TopEnv
@@ -125,6 +132,14 @@ liftTop act = do
 
 labelFromId :: AST.Id -> Label
 labelFromId = Label . AST.iName
+
+makeConstructorName :: AST.Id -> Maybe AST.Id -> String
+makeConstructorName cname = \case
+  Nothing -> "cstr_" ++ AST.iName cname ++ "_unnamed_"
+  Just n -> "cstr_" ++ AST.iName cname ++ "_" ++ AST.iName n
+
+makeMethodName :: Int -> AST.Id -> String
+makeMethodName ci mth = "mth_" ++ show ci ++ "_" ++ AST.iName mth
 
 newSup :: Compiler Int
 newSup = do
@@ -240,13 +255,14 @@ cExpr = \case
     offset <- liftTop $ views fieldEnv (M.! (c,fld))
     write [Assg tt v (Proj ce offset)]
     return $ CVar v
-  -- AST.EMApp _ rt e m as -> do
-  --   ce <- cExpr e
-  --   asRefs <- mapM cExpr as
-  --   t@(TObj ci _) <- liftTop $ cType rt
-  --   v <- newVar t
-  --   write $ [Assg t v (VCall ci (AST.iName m) asRefs)]
-  --   return $ CVar v
+  AST.EMApp _ rt e m as -> do
+    ce <- cExpr e
+    asRefs <- mapM cExpr as
+    t <- liftTop $ cType rt
+    et <- liftTop $ cType (AST.getExprDec e)
+    v <- newVar t
+    write $ [Assg t v (VCall (AST.iName m) (ce:asRefs))]
+    return $ CVar v
   AST.ENew _ t c n as -> do
     asRefs <- mapM cExpr as
     tt <- liftTop $ cType t
@@ -396,13 +412,63 @@ cFunDef f = do
 cTopDef :: AST.TopDef 'AST.Typed -> TopCompiler [Routine]
 cTopDef = \case
   AST.TDFun f -> pure <$> cFunDef f
-  AST.TDClass _todo -> pure [] -- TODO
+  AST.TDClass c ->
+    fmap concat $ forM (c^.AST.body) $ \case
+    AST.CMMethod mth -> cMethod (c^.AST.name) mth
+
+cMethod :: AST.Id -> AST.Method 'AST.Typed -> TopCompiler [Routine]
+cMethod cl mth@AST.Method{AST._methodBody = Just methodBody} = do
+  let argsWithThis = AST.Arg { AST._argAnn = AST.fakeAnn
+                             , AST._argName = "this"
+                             , AST._argTy = AST.TClass cl
+                             }
+                     : mth^.AST.args
+  argTypes <- mapM cType (argsWithThis <&> (^.AST.ty))
+  classId <- views classIds (M.! cl)
+  let argIds = map (VarId . negate) [1..length argsWithThis]
+      initVarMap = M.fromList $ zip (argsWithThis <&> (^.AST.name)) argIds
+      initTypeMap = M.fromList $ zip argIds argTypes
+      labelName = Label $ makeMethodName classId (mth^.AST.name)
+  r <- compileBody labelName
+       (initSt initVarMap initTypeMap) (methodBody)
+  return [Routine labelName argIds r]
+cMethod _ _ = return []
+
+buildMethodMap :: TopCompiler MethodMap
+buildMethodMap = do
+  cenv <- view classEnv
+  let classes = M.toList cenv
+      allMethods = nub [m | (_, c) <- classes, m <- M.keys (c ^. Tc.methods)]
+  flip execStateT [] $ forM_ allMethods $ \m -> do
+    impls <- forM classes $ \(cn, _) -> do
+      let search :: AST.Id -> Maybe AST.Id
+          search c =
+            let entry :: Tc.ClassEntry
+                entry = cenv M.! c
+            in case M.lookup m (entry^.Tc.methods) of
+              Nothing -> case entry^.AST.super of
+                Nothing -> Nothing
+                Just csup -> search csup
+              Just _ -> Just c
+      case search cn of
+        Nothing -> return Nothing
+        Just cown -> do
+          iown <- views classIds (M.! cown)
+          i <- views classIds (M.! cn)
+          let implName = makeMethodName iown m
+          return $ Just (implName, i)
+    let resMap = foldl' folder M.empty (catMaybes impls) where
+          folder prev (iname, cid) = case M.lookup iname prev of
+            Nothing -> M.insert iname [cid] prev
+            Just cids -> M.insert iname (cid:cids) prev
+    modify ((m, resMap):)
+
 
 cProgram :: AST.Program 'AST.Typed -> TopCompiler IR
 cProgram (AST.Program ts) = IR . join <$> mapM cTopDef ts
 
-compile :: Tc.ClassEnv -> AST.Program 'AST.Typed -> IR
-compile ce p = runReader (cProgram p) (initTopEnv ce)
+compile :: Tc.ClassEnv -> AST.Program 'AST.Typed -> (IR, MethodMap)
+compile ce p = runReader ((,) <$> cProgram p <*> buildMethodMap) (initTopEnv ce)
 
 
 getUsedVars :: Block -> S.Set VarId
@@ -462,7 +528,7 @@ instance Pretty Expr where
     RelOp o l r -> pPrint o <+> pPrint l <+> pPrint r
     Const c -> pPrint c
     Call f as -> text f <> parens (cat $ punctuate comma $ map pPrint as)
-    VCall o f as -> pPrint o <> "." <> text f <> parens (cat $ punctuate comma $ map pPrint as)
+    VCall f as -> "vrt " <> text f <> parens (cat $ punctuate comma $ map pPrint as)
     NewObj -> "new_obj"
     Proj a i -> "π_" <> int i <+> pPrint a
 

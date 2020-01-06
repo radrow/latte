@@ -8,7 +8,7 @@ import Prelude as P
 optimize :: Assembly -> Assembly
 optimize (Assembly is) =
   Assembly
-  -- $ jumps . movs
+  -- $ jumps . movs . arith
   $ is
 
 jumps :: [Instr] -> [Instr]
@@ -50,6 +50,20 @@ movs = \case
   -- mov 0 to reg instead of xor reg reg
   Mov (OConst 0) b : rest
     | isReg b -> movs (Xor b b : rest)
+
+  -- nothing to do
+  h : t -> h : movs t
+  [] -> []
+
+arith :: [Instr] -> [Instr]
+arith = \case
+  -- add 0
+  Add (OConst 0) _ : rest
+    -> arith rest
+
+  -- sub 0
+  Sub (OConst 0) _ : rest
+    -> arith rest
 
   -- nothing to do
   h : t -> h : movs t
