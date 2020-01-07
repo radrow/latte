@@ -18,7 +18,6 @@ import           Prelude hiding (lex, LT, GT, EQ)
 
 import qualified Latte.Frontend.AST as AST
 
-
 type Parser = ParsecT Void Text Identity
 runLatteParser :: Parser a -> FilePath -> Text -> Either String a
 runLatteParser p filename inp = first
@@ -50,7 +49,7 @@ keywords =
   , "while"
   , "if"
   , "else"
-  , "int", "string", "bool", "void"
+  , "int", "string", "boolean", "void"
   , "true", "false"
   , "class", "public", "private"
   , "static", "new"
@@ -97,23 +96,6 @@ brac :: Parser a -> Parser a
 brac = between (L.symbol skip "{") (L.symbol skip "}")
 
 
-escapedChar :: Parser Char
-escapedChar = do
-  c <- try (printChar >>= \cc -> when (cc == '"') mzero >> pure cc)
-  if c /= '\\'
-    then pure c
-    else printChar >>= \case
-    'n'  -> pure '\n'
-    't'  -> pure '\t'
-    '\\' -> pure '\\'
-    'r'  -> pure '\r'
-    'v'  -> pure '\v'
-    'b'  -> pure '\b'
-    'f'  -> pure '\f'
-    '0'  -> pure '\0'
-    bad  -> fail $ "Cannot escape char '" <> [bad] <> "'"
-
-
 infixL :: Parser (a -> b -> a) -> Parser b -> a -> Parser a
 infixL op p x = do
   f <- op
@@ -130,7 +112,7 @@ ident =  try $ lId >>= \i -> if (i `elem` keywords)
 lit :: Parser AST.Lit
 lit = choice
   [ AST.LInt <$> signed
-  , AST.LString <$> between (symbol "\"") (symbol "\"") (many escapedChar)
+  , AST.LString <$> (char '\"' *> manyTill L.charLiteral (char '\"'))
   , AST.LBool <$> ((True <$ word "true") <|> (False <$ word "false"))
   ]
 
@@ -296,7 +278,7 @@ body = AST.entailStmt <$> block
 type_ :: Parser AST.Type
 type_ = choice
   [ AST.TInt <$ word "int"
-  , AST.TBool <$ word "bool"
+  , AST.TBool <$ word "boolean"
   , AST.TString <$ word "string"
   , AST.TVoid <$ word "void"
   , AST.TClass <$> ident

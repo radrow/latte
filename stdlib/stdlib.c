@@ -6,10 +6,12 @@ typedef char* string;
 
 void printInt(int x) {
   printf("%d\n", x);
+  fflush(stdout);
 }
 
 void printString(string s) {
-  printf(s);
+  printf("%s\n", s);
+  fflush(stdout);
 }
 
 int readInt() {
@@ -28,9 +30,9 @@ string readString() {
 }
 
 string stringConcat(const string a, const string b) {
-  size_t la = strlen(a);
-  size_t lb = strlen(b);
-  size_t lo = la + lb;
+  const size_t la = strlen(a);
+  const size_t lb = strlen(b);
+  const size_t lo = la + lb + 1;
   char* o = calloc(sizeof(char), lo);
   o = strcat(o, a);
   o = strcat(o, b);

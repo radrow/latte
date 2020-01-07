@@ -371,7 +371,7 @@ tcTopDef = \case
   TDFun fdef -> do
     let addArgEnv =
           flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (fdef^.args))
-    when (not $ isReturning (fdef^.body)) $ throwError noReturn
+    when (not $ (fdef^.retType == TVoid) || isReturning (fdef^.body)) $ throwError noReturn
     let bodyEnv = (over definedVars addArgEnv . set retType (Just $ fdef^.retType))
     tbody <- local bodyEnv (tcStmt $ fdef^.body)
     pure $ TDFun $ FunDef (fdef^.ann) (fdef^.retType) (fdef^.name) (fdef^.args) tbody
@@ -381,7 +381,7 @@ tcTopDef = \case
           CMMethod mdef -> do
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (mdef^.args))
-            when (maybe False (not . isReturning) (mdef^.body)) $ throwError noReturn
+            when (maybe False (\b -> not $ (mdef^.retType == TVoid) || isReturning b) (mdef^.body)) $ throwError noReturn
             let setBodyEnv = over definedVars addArgEnv .
                              set retType (Just $ mdef^.retType) .
                              set currentFun (Just $ mdef^.name) .

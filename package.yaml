@@ -7,7 +7,8 @@ maintainer:          "rr386088@students.mimuw.edu.pl"
 copyright:           "2019 Radosław Rowicki"
 
 extra-source-files:
-- README.md
+- README.org
+
 
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
@@ -32,7 +33,6 @@ library:
     - MultiParamTypeClasses
   dependencies:
     - mtl
-    - free
     - lens
     - ghc-prim
     - megaparsec

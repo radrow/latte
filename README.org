@@ -41,3 +41,11 @@ Język powienien wspierać:
   - proste optymalizacje kodu X86 typu peephole
 
 Niektóre wymagania językowe mogą być jeszcze niespełnione, dołożę wszelkich starań by w drugiej iteracji język był zgodny ze specyfikacją.
+
+Czego nie ma a będzie:
+  - niektóre domyślne wartości zmiennych
+  - optymalizacja wyrażeń logicznych
+  - wyliczanie stałych
+  - hermetyzacja klas
+  - Porządny makefile
+  - Pola i metody statyczne

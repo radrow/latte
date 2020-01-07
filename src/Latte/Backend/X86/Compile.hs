@@ -110,16 +110,31 @@ cNOp = \case
 
 cROp :: IR.RelOp -> Operand -> Operand -> Compiler ()
 cROp o l r = do
-  let i = case o of
-        IR.Eq  -> sete
-        IR.Neq  -> setne
-        IR.Gt  -> setg
-        IR.Ge  -> setge
-        IR.Lt  -> setl
-        IR.Le  -> setle
+  -- let i = case o of
+  --       IR.Eq  -> sete
+  --       IR.Neq  -> setne
+  --       IR.Gt  -> setg
+  --       IR.Ge  -> setge
+  --       IR.Lt  -> setl
+  --       IR.Le  -> setle
+  let j = case o of
+        IR.Eq  -> je
+        IR.Neq  -> jne
+        IR.Gt  -> jg
+        IR.Ge  -> jge
+        IR.Lt  -> jl
+        IR.Le  -> jle
+  push r
+  push l
   cmp l r
-  i al
-  test al al
+  void $ mfix $ \con -> do
+    void $ mfix $ \vtrue -> do
+      j $ OLabel vtrue
+      mov (OConst 0) r
+      jmp $ OLabel con
+      makeLabel "boolean_t"
+    mov (OConst 1) r
+    makeLabel "boolean_con"
 
 cROpJmp :: IR.RelOp -> String -> String -> Compiler ()
 cROpJmp o ltrue lfalse = do
@@ -159,8 +174,10 @@ cExpr t vloc e = case e of
     cConst v eax
     case o of
       IR.Not -> do
+        xor ecx ecx
         test eax eax
-        setz eax
+        setz cl
+        mov ecx eax
       IR.Neg ->
         neg eax
     mov eax vloc
@@ -207,7 +224,9 @@ cInstr i = comment (AST.pp i) >> case i of
 
 cFinInstr :: IR.FinInstr -> Compiler ()
 cFinInstr i = comment (AST.pp i) >> case i of
-  IR.Ret Nothing -> ret
+  IR.Ret Nothing -> do
+    leave
+    ret
   IR.Ret (Just v) -> do
     cConst v eax
     leave

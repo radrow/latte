@@ -84,6 +84,7 @@ data Env = Env
   , _envNextBlock    :: Maybe Label
   , _envTopEnv       :: TopEnv
   , _envCurrentClass :: Maybe AST.Id
+  , _envVirtReturn   :: Bool
   }
 initEnv :: Label -> Label -> TopCompiler Env
 initEnv r l = ask >>= \te -> pure Env
@@ -92,6 +93,7 @@ initEnv r l = ask >>= \te -> pure Env
   , _envNextBlock = Nothing
   , _envTopEnv = te
   , _envCurrentClass = Nothing
+  , _envVirtReturn = False
   }
 
 data TopEnv = TopEnv
@@ -165,7 +167,7 @@ loadVar i = uses varMap (maybe (error $ "no var? " ++ AST.iName i) id . M.lookup
 localScope :: Compiler a -> Compiler a
 localScope k = do
   s <- get
-  r <- k
+  r <- local (set virtReturn False) k
   modify (set varMap (s^.varMap) . set typeMap (s^.typeMap))
   return r
 
@@ -338,7 +340,8 @@ cStmt = \case
     vi <- registerVar tt v
     case tt of
       TObj _ _ -> write [Assg tt vi NewObj]
-      _ -> return ()
+      TInt _ -> write [Assg tt vi (Const $ CInt 0)]
+      TString -> write [Assg tt vi (Const $ CStr "")]
     cStmt k
   AST.SIncr _ v k -> do
     t <- liftTop $ cType AST.TInt
@@ -392,12 +395,13 @@ cStmt = \case
     newBlock cl (cStmt k)
   AST.SEmpty _ -> do
     n <- view nextBlock
+    vret <- view virtReturn
     cutBlock $ case n of
       Just nb -> Jmp nb
-      Nothing -> Unreachable
+      Nothing -> if vret then Ret Nothing else Unreachable
 
-compileBody :: Label -> St -> AST.Stmt 'AST.Typed -> TopCompiler [Block]
-compileBody l st b = snd <$> liftCompiler l (cStmt b) st
+compileBody :: Bool -> Label -> St -> AST.Stmt 'AST.Typed -> TopCompiler [Block]
+compileBody retVoid l st b = snd <$> liftCompiler l (local (set virtReturn retVoid) (cStmt b)) st
 
 cFunDef :: AST.FunDef 'AST.Typed -> TopCompiler Routine
 cFunDef f = do
@@ -405,7 +409,7 @@ cFunDef f = do
   let argIds = map (VarId . negate) [1..length $ f^.AST.args]
       initVarMap = M.fromList $ zip (f^.AST.args <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
-  body <- compileBody (labelFromId $ f^.AST.name)
+  body <- compileBody (f^.AST.retType == AST.TVoid) (labelFromId $ f^.AST.name)
              (initSt initVarMap initTypeMap) (f^.AST.body)
   return $  Routine (labelFromId $ f^.AST.name) argIds body
 
@@ -429,7 +433,7 @@ cMethod cl mth@AST.Method{AST._methodBody = Just methodBody} = do
       initVarMap = M.fromList $ zip (argsWithThis <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
       labelName = Label $ makeMethodName classId (mth^.AST.name)
-  r <- compileBody labelName
+  r <- compileBody (mth^.AST.retType == AST.TVoid) labelName
        (initSt initVarMap initTypeMap) (methodBody)
   return [Routine labelName argIds r]
 cMethod _ _ = return []
