@@ -21,7 +21,7 @@ main = do
       contents <- T.readFile file
       case buildX86 file contents of
         Right s -> do
-          let asmName = replaceExtension file "s"
+          let asmName = file -<.> "s"
               binName = dropExtension file
           std <- putStdLib
           writeFile asmName (s <> "\n")
