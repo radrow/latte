@@ -1,0 +1,43 @@
+#+AUTHOR: Radosław Rowicki
+
+* Latte
+
+Napisany w Haskellu kompilator podzbioru języka Latte
+
+** Instalacja
+
+Do skompilowania należy użyć programu ~stack~, który znajduje się na maszynie students w katalogu ~/home/students/inf/PUBLIC/MRJP/Stack~ lub pod nazwą ~haskell_stack~ na debianach w laboratoriach. Ewentualnie można pobrać je bezpośrednio z repozytorium ~community~ na Arch Linuxie, lub ściągnąć ze strony ~https://get.haskellstack.org~.
+
+Polecenie kompilacji: ~stack build~
+Polecenie instalacji w lokalnym katalogu: ~stack install --local-bin-path=$(shell pwd)~
+
+Program sam pobierze odpowiednie zależności, które mogą być sprawdzone w pliku konfiguracyjnym ~package.yaml~.  Instalator może wymagać odpowiednio dużych (ale rozsądnych) zasobów pamięciowych.
+
+Po zbudowaniu można uruchomić program poleceniem ~stack exec lattec~ lub po instalacji uruchomić program ~lattec~. 
+
+** Struktura projektu
+
+Obowiązuje standardowa konwencja stackowych projektów.
+
+Główna część kodu znajduje się w folderze ~src~. Podzielony jest on na części ~Frontend~, ~Backend~ oraz ~Semantics~. W pierwszej znajduje się cała logika parsera, typechecker i reprezentacja pośrednia. W drugiej docelowo mają być zaimplementowane finalne części kompilatora – jak na razie jest tylko X86 32bit. Część semantyczna nie jest oficjalną częścią projektu i miały się tam znajdować interpretery poszczególnych reprezentacji kodu – można ją zignorować.
+
+W folderze ~stdlib~ jest zaimplementowana biblioteka standardowa w języku C. Do skompilowania jej wymagany jest dostęp do folderu tymczasowego (na linuxie ~/tmp~) oraz kompilator GCC w zmiennej środowiskowej ~PATH~.
+
+Folder ~app~ zawiera program uruchamiający kompilator.
+
+** Zaimplementowane funkcje
+
+Język powienien wspierać:
+  - instrukcje warunkowe
+  - pętlę while
+  - funkcje pierwszego rzędu
+  - statyczne typowanie
+  - operacje logiczne i liczbowe
+  - zmienne lokalne
+  - stringi
+  - klasy
+  - dziedziczenie klas
+  - metody wirtualne
+  - proste optymalizacje kodu X86 typu peephole
+
+Niektóre wymagania językowe mogą być jeszcze niespełnione, dołożę wszelkich starań by w drugiej iteracji język był zgodny ze specyfikacją.
