@@ -9,6 +9,7 @@ module Latte.Frontend.Typechecker where
 
 import Latte.Frontend.AST
 import Latte.Frontend.Error
+import Latte.Pretty
 
 import Data.Functor
 import qualified Data.Map as M
@@ -47,7 +48,7 @@ data TypecheckerEnv = TypecheckerEnv
   , _teCurrentFun       :: Maybe Id
   , _teCurrentClass     :: Maybe Id
   , _teClassEnv         :: ClassEnv
-  , _teLoc              :: Ann
+  , _teLoc              :: Maybe Ann
   , _teRetType          :: Maybe Type
   , _teCurrentScopeVars :: S.Set Id
   }
@@ -65,7 +66,7 @@ initialEnv = TypecheckerEnv
   , _teCurrentFun       = Nothing
   , _teCurrentClass     = Nothing
   , _teClassEnv         = M.empty
-  , _teLoc              = fakeAnn
+  , _teLoc              = Nothing
   , _teRetType          = Nothing
   , _teCurrentScopeVars = S.empty
   }
@@ -73,10 +74,24 @@ initialEnv = TypecheckerEnv
 makeLensesWith abbreviatedFields ''TypecheckerEnv
 makeLensesWith abbreviatedFields ''ClassEntry
 
+raiseError :: Error -> Typechecker a
+raiseError e = view loc >>= \a -> throwError $ maybe "" pp a ++ ": " ++ pp e
+
+raiseErrorAt :: MonadError String m => Ann -> Error -> m a
+raiseErrorAt a e = throwError $ pp a ++ ": " ++ pp e
+
+raiseErrorNoLoc :: MonadError String m => Error -> m a
+raiseErrorNoLoc e = throwError $ pp e
+
+withAnn :: Ann -> Typechecker a -> Typechecker a
+withAnn a = local (set loc (Just a))
+
+withAnnOf :: HasAnn h Ann => h -> Typechecker a -> Typechecker a
+withAnnOf h = withAnn (h^.ann)
 
 getClassEntry :: Id -> Typechecker ClassEntry
 getClassEntry i = views classEnv (M.lookup i) >>= \case
-  Nothing -> throwError $ undefinedClass i
+  Nothing -> raiseError $ UndefinedClass i
   Just c -> pure c
 
 
@@ -84,15 +99,15 @@ tcVar :: Id -> Typechecker Type
 tcVar v = (M.lookup v) <$> view definedVars >>= \case
   Nothing | v == Id "this" -> do
               view currentClass >>= \case
-                Nothing -> throwError notInClass
+                Nothing -> raiseError NotInClass
                 Just c -> pure $ TClass c
-  Nothing -> throwError $ undefinedVar v
+  Nothing -> raiseError $ UndefinedVar v
   Just t -> pure t
 
 
 tcFun :: Id -> Typechecker (Type, [Type])
 tcFun v = (M.lookup v) <$> view definedFuns >>= \case
-  Nothing -> throwError $ undefinedVar v
+  Nothing -> raiseError $ UndefinedVar v
   Just t -> pure t
 
 tcField :: Id -> Id -> Typechecker Type
@@ -101,7 +116,7 @@ tcField c m =
         ce <- getClassEntry sc
         case M.lookup m (ce^.fields) of
           Nothing -> case ce^.super of
-            Nothing -> throwError $ noSuchField c m
+            Nothing -> raiseError $ UndefinedField c m
             Just x -> search x
           Just x -> pure x
   in search c
@@ -112,7 +127,7 @@ tcMethod c m =
         ce <- getClassEntry sc
         case M.lookup m (ce^.methods) of
           Nothing -> case ce^.super of
-            Nothing -> throwError $ noSuchMethod c m
+            Nothing -> raiseError $ UndefinedMethod c m
             Just x -> search x
           Just x -> pure x
   in search c
@@ -121,7 +136,7 @@ tcConstructor :: Id -> Maybe Id -> Typechecker [Type]
 tcConstructor c m = do
   ce <- getClassEntry c
   case M.lookup m (ce^.constructors) of
-    Nothing -> throwError $ noSuchConstructor c m
+    Nothing -> raiseError $ UndefinedConstructor c m
     Just ts -> pure ts
 
 matchTypes :: Type -> Type -> Typechecker ()
@@ -131,7 +146,7 @@ matchTypes a b = case (a, b) of
   (TBool, TBool) -> pure ()
   (TString, TString) -> pure ()
   (TClass o1, TClass o2) -> matchClass o1 o2
-  _ -> throwError $ typeMatchError a b
+  _ -> raiseError $ TypeMatch a b
 
 
 matchClass :: Id -> Id -> Typechecker ()
@@ -143,7 +158,7 @@ matchClass c1 c2 =
           Just i2' -> search i1 i2'
   in search c1 c2 >>= \case
     True -> pure ()
-    False -> throwError $ classMatchError c1 c2
+    False -> raiseError $ ClassMatch c1 c2
 
 assertType :: Type -> Expr 'Typed -> Typechecker ()
 assertType t e = matchTypes t (getExprDec e)
@@ -153,19 +168,19 @@ tcOp :: AnyOp -> Type -> Type -> Typechecker Type
 tcOp o l r =
   let tc t = matchTypes t r >> matchTypes t l
   in case o of
-    Op (LT _)    -> tc TInt $> TBool
-    Op (LEQ _)   -> tc TInt $> TBool
-    Op (EQ _)    -> matchTypes l r $> TBool
-    Op (NEQ _)   -> matchTypes l r $> TBool
-    Op (GEQ _)   -> tc TInt $> TBool
-    Op (GT _)    -> tc TInt $> TBool
-    Op (Plus _)  -> (tc TInt $> TInt) <|> (tc TString $> TString)
-    Op (Minus _) -> tc TInt $> TInt
-    Op (Mult _)  -> tc TInt $> TInt
-    Op (Div _)   -> tc TInt $> TInt
-    Op (Mod _)   -> tc TInt $> TInt
-    Op (Or _)    -> tc TBool $> TBool
-    Op (And _)   -> tc TBool $> TBool
+    Op (LT a)    -> withAnn a $ tc TInt $> TBool
+    Op (LEQ a)   -> withAnn a $ tc TInt $> TBool
+    Op (EQ a)    -> withAnn a $ matchTypes l r $> TBool
+    Op (NEQ a)   -> withAnn a $ matchTypes l r $> TBool
+    Op (GEQ a)   -> withAnn a $ tc TInt $> TBool
+    Op (GT a)    -> withAnn a $ tc TInt $> TBool
+    Op (Plus a)  -> withAnn a $ (tc TInt $> TInt) <|> (tc TString $> TString)
+    Op (Minus a) -> withAnn a $ tc TInt $> TInt
+    Op (Mult a)  -> withAnn a $ tc TInt $> TInt
+    Op (Div a)   -> withAnn a $ tc TInt $> TInt
+    Op (Mod a)   -> withAnn a $ tc TInt $> TInt
+    Op (Or a)    -> withAnn a $ tc TBool $> TBool
+    Op (And a)   -> withAnn a $ tc TBool $> TBool
 
 
 tcUnOp :: UnOp -> Type -> Typechecker Type
@@ -176,48 +191,48 @@ tcUnOp o t = case o of
 
 tcExpr :: Expr 'Untyped -> Typechecker (Expr 'Typed)
 tcExpr = \case
-  ELit a () l -> case l of
+  ELit a () l -> withAnn a $ case l of
     LInt i -> pure $ ELit a TInt (LInt i)
     LString s -> pure $ ELit a TString (LString s)
     LBool b -> pure $ ELit a TBool (LBool b)
-  EVar a () v -> tcVar v >>= \t -> pure $ EVar a t v
-  EApp a () fname as -> do
+  EVar a () v -> withAnn a $ tcVar v >>= \t -> pure $ EVar a t v
+  EApp a () fname as -> withAnn a $ do
     (rett, argst) <- tcFun fname
     typedArgs <- mapM tcExpr as
     when (length as /= length argst) $
-      throwError $ argNumMismatch (length argst) (length as)
+      raiseError $ ArgNum fname (length argst) (length as)
     forM_ (zip argst typedArgs) $ \(expected, typed) ->
       assertType expected typed
     pure $ EApp a rett fname typedArgs
-  EUnOp a () o v -> do
+  EUnOp a () o v -> withAnn a $ do
     vt <- tcExpr v
     rt <- tcUnOp o (getExprDec vt)
     pure $ EUnOp a rt o vt
-  EOp a () o l r -> do
+  EOp a () o l r -> withAnn a $ do
     tl <- tcExpr l
     tr <- tcExpr r
     tres <- tcOp o (getExprDec tl) (getExprDec tr)
     pure $ EOp a tres o tl tr
-  EProj a () e i -> do
+  EProj a () e i -> withAnn a $ do
     et <- tcExpr e
     case getExprDec et of
       TClass c -> do
         t <- tcField c i
         pure $ EProj a t et i
-      t -> throwError $ notAClass t
-  EMApp a () e i as -> do
+      t -> raiseError $ NotAClass t
+  EMApp a () e i as -> withAnn a $ do
     et <- tcExpr e
     case getExprDec et of
-      TClass c -> do
+      TClass c -> withAnn a $ do
         (rt, argst) <- tcMethod c i
         typedArgs <- mapM tcExpr as
         when (length as /= length argst) $
-          throwError $ argNumMismatch (length argst) (length as)
+          raiseError $ ArgNum i (length argst) (length as)
         forM_ (zip argst typedArgs) $ \(expected, typed) ->
           assertType expected typed
         pure $ EMApp a rt et i typedArgs
-      t -> throwError $ notAClass t
-  ENew a () c i as -> do
+      t -> raiseError $ NotAClass t
+  ENew a () c i as -> withAnn a $ do
     argst <- tcConstructor c i
     typedArgs <- mapM tcExpr as
     forM_ (zip argst typedArgs) $ \(expected, typed) ->
@@ -234,18 +249,18 @@ newScope = local (set currentScopeVars S.empty)
 
 tcStmt :: Stmt 'Untyped -> Typechecker (Stmt 'Typed)
 tcStmt = \case
-  SDecl a t v k -> do
+  SDecl a t v k -> withAnn a $ do
     vars <- view currentScopeVars
     when (S.member v vars) $
-      throwError $ duplicateVar v
+      raiseError $ DuplicateVar v
     local (over definedVars (M.insert v t) . over currentScopeVars (S.insert v)) $
       SDecl a t v <$> tcStmt k
-  SAssg a v e k -> do
+  SAssg a v e k -> withAnn a $ do
     et <- tcExpr e
     vt <- tcVar v
     assertType vt et
     SAssg a v et <$> tcStmt k
-  SFieldAssg a b f e k -> do
+  SFieldAssg a b f e k -> withAnn a $ do
     bt <- tcExpr b
     et <- tcExpr e
     case getExprDec bt of
@@ -253,46 +268,46 @@ tcStmt = \case
         t <- tcField c f
         assertType t et
         SFieldAssg a bt f et <$> tcStmt k
-      t -> throwError $ notAClass t
-  SIncr a v k -> do
+      t -> raiseError $ NotAClass t
+  SIncr a v k -> withAnn a $ do
     vt <- tcVar v
     matchTypes TInt vt
     SIncr a v <$> tcStmt k
-  SDecr a v k -> do
+  SDecr a v k -> withAnn a $ do
     vt <- tcVar v
     matchTypes TInt vt
     SDecr a v <$> tcStmt k
-  SCond a c t k -> do
+  SCond a c t k -> withAnn a $ do
     ct <- tcExpr c
     assertType TBool ct
     tt <- newScope $ tcStmt t
     SCond a ct tt <$> tcStmt k
-  SCondElse a c t e k -> do
+  SCondElse a c t e k -> withAnn a $ do
     ct <- tcExpr c
     assertType TBool ct
     tt <- newScope $ tcStmt t
     et <- newScope $ tcStmt e
     SCondElse a ct tt et <$> tcStmt k
-  SWhile a c b k -> do
+  SWhile a c b k -> withAnn a $ do
     ct <- tcExpr c
     assertType TBool ct
     bt <- newScope $ tcStmt b
     SWhile a ct bt <$> tcStmt k
-  SExp a e k -> do
+  SExp a e k -> withAnn a $ do
     et <- tcExpr e
     SExp a et <$> tcStmt k
-  SRet a e k -> do
+  SRet a e k -> withAnn a $ do
     et <- tcExpr e
     rt <- currentRetType
     assertType rt et
     SRet a et <$> tcStmt k
-  SVRet a k -> do
+  SVRet a k -> withAnn a $ do
     rt <- currentRetType
     matchTypes rt TVoid
     SVRet a <$> tcStmt k
-  SBlock a b k ->
+  SBlock a b k -> withAnn a $
     SBlock a <$> (newScope $ tcStmt b) <*> tcStmt k
-  SEmpty a -> pure $ SEmpty a
+  SEmpty a -> withAnn a $ pure $ SEmpty a
 
 
 isReturning :: Stmt a -> Bool
@@ -339,29 +354,29 @@ buildClassEntry c = ClassEntry
 buildInitialEnv :: [TopDef 'Untyped] -> Except String TypecheckerEnv
 buildInitialEnv defs = do
   when (null [() | TDFun fdef <- defs, fdef^.name == "main"]) $
-    throwError noMain
+    raiseErrorNoLoc NoMain
   foldM (\prev d ->
            case d of
              TDFun fdef -> do
                when (fdef^.name == "main" && (fdef^.retType /= TInt || not (null $ fdef^.args))) $
-                 throwError mainType
+                 raiseErrorNoLoc MainType
                when (fdef^.name `elem` (M.keys $ prev^.definedFuns)) $
-                 throwError $ duplicateFun (fdef^.name)
+                 raiseErrorAt (fdef^.ann) $ DuplicateFun (fdef^.name)
                pure $
                  over definedFuns (M.insert (fdef^.name) (fdef^.retType, fmap (^.ty) (fdef^.args))) prev
              TDClass cd -> do
                when (cd^.name `elem` (M.keys $ prev^.classEnv)) $
-                 throwError $ duplicateClass (cd^.name)
+                 raiseErrorAt (cd^.ann) $ DuplicateClass (cd^.name)
                let ce = buildClassEntry cd
                    checkDups :: (MonadError String m, Ord s)
-                             => [x] -> (x -> s) -> (s -> String) -> m ()
-                   checkDups vals getname err = flip evalStateT S.empty $ forM_ vals $ \f -> do
+                             => [(Ann, x)] -> (x -> s) -> (s -> Error) -> m ()
+                   checkDups vals getname err = flip evalStateT S.empty $ forM_ vals $ \(a, f) -> do
                      jeb <- gets $ S.member (getname f)
-                     when jeb $ throwError $ err (getname f)
+                     when jeb $ raiseErrorAt a $ err (getname f)
                      modify $ S.insert (getname f)
-               checkDups [f | CMField fd <- cd^.body, (f, _) <- NE.toList $ fd^.assignments ] id duplicateField
-               checkDups [m | CMMethod m <- cd^.body ] (^.name) duplicateMethod
-               checkDups [c | CMConstructor c <- cd^.body ] (^.name) duplicateConstructor
+               checkDups [(fd^.ann, f) | CMField fd <- cd^.body, (f, _) <- NE.toList $ fd^.assignments ] id DuplicateField
+               checkDups [(m^.ann, m) | CMMethod m <- cd^.body ] (^.name) DuplicateMethod
+               checkDups [(c^.ann, c) | CMConstructor c <- cd^.body ] (^.name) DuplicateConstructor
                pure $ over classEnv (M.insert (cd^.name) ce) prev
         ) initialEnv defs
 
@@ -371,7 +386,8 @@ tcTopDef = \case
   TDFun fdef -> do
     let addArgEnv =
           flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (fdef^.args))
-    when (not $ (fdef^.retType == TVoid) || isReturning (fdef^.body)) $ throwError noReturn
+    when (not $ (fdef^.retType == TVoid) || isReturning (fdef^.body)) $
+      raiseErrorAt (fdef^.ann) NoReturn
     let bodyEnv = (over definedVars addArgEnv . set retType (Just $ fdef^.retType))
     tbody <- local bodyEnv (tcStmt $ fdef^.body)
     pure $ TDFun $ FunDef (fdef^.ann) (fdef^.retType) (fdef^.name) (fdef^.args) tbody
@@ -381,7 +397,8 @@ tcTopDef = \case
           CMMethod mdef -> do
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (mdef^.args))
-            when (maybe False (\b -> not $ (mdef^.retType == TVoid) || isReturning b) (mdef^.body)) $ throwError noReturn
+            when (maybe False (\b -> not $ (mdef^.retType == TVoid) || isReturning b) (mdef^.body)) $
+              raiseErrorAt (mdef^.ann) NoReturn
             let setBodyEnv = over definedVars addArgEnv .
                              set retType (Just $ mdef^.retType) .
                              set currentFun (Just $ mdef^.name) .
@@ -417,7 +434,7 @@ tcTopDef = \case
           CMConstructor codef -> do
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (codef^.args))
-            when (not $ isReturning (codef^.body)) $ throwError noReturn
+            when (not $ isReturning (codef^.body)) $ raiseErrorAt (codef^.ann) NoReturn
             let setBodyEnv = over definedVars addArgEnv .
                              set retType (Just $ TClass (cdef^.name)) .
                              set currentFun (codef^.name <|> Just (Id "unnamed constructor")) .

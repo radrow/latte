@@ -21,6 +21,7 @@ import qualified Latte.Frontend.IR as IR
 import qualified Latte.Frontend.AST as AST
 import Latte.Backend.X86.X86 as X86
 import Latte.Backend.X86.PeepHole
+import Latte.Pretty
 
 type VarMap = M.Map IR.VarId Operand
 
@@ -210,7 +211,7 @@ cExpr t vloc e = case e of
     mov eax vloc
 
 cInstr :: IR.Instr -> Compiler ()
-cInstr i = comment (AST.pp i) >> case i of
+cInstr i = comment (pp i) >> case i of
   IR.Assg t loc e -> do
     vloc <- getLoc loc
     cExpr t vloc e
@@ -223,7 +224,7 @@ cInstr i = comment (AST.pp i) >> case i of
     mov eax (mem (0 :: Int) (ECX, EDX, 4 :: Int))
 
 cFinInstr :: IR.FinInstr -> Compiler ()
-cFinInstr i = comment (AST.pp i) >> case i of
+cFinInstr i = comment (pp i) >> case i of
   IR.Ret Nothing -> do
     leave
     ret

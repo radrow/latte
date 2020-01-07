@@ -26,5 +26,5 @@ main = do
           std <- putStdLib
           writeFile asmName (s <> "\n")
           callProcess "gcc" [asmName, std, "-m32", "-o", binName]
-        Left e -> hPutStrLn stderr e >> exitFailure
+        Left e -> hPutStrLn stderr ("ERROR:\n" ++ e) >> exitFailure
     _ -> hPutStrLn stderr "wtf dude" >> exitFailure

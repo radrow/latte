@@ -13,9 +13,10 @@ module Latte.Frontend.AST where
 import Data.String
 import Data.List.NonEmpty(NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Text.PrettyPrint.HughesPJClass
 import GHC.TypeNats(Nat, type (+))
 import Control.Lens
+
+import Latte.Pretty
 
 import Prelude hiding ((<>), EQ, GT, LT)
 
@@ -444,9 +445,6 @@ instance Pretty ClassMemberAccess where
 instance Pretty (Program a) where
   pPrint (Program defs) = vcat $ map pPrint defs
 
-
-pp :: Pretty p => p -> String
-pp = render . pPrint
 
 -- instance HasAnn (Expr p) Ann where
 --   ann = \case

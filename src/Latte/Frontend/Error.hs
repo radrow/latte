@@ -1,75 +1,94 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleContexts #-}
 module Latte.Frontend.Error where
 
+import Control.Monad.Except
 import Latte.Frontend.AST
+import Latte.Pretty
+import Prelude hiding ((<>))
 
-emph :: String -> String
-emph s = "\x1b[1m" <> s <> "\x1b[0m"
+data Error
+  = MainType
+  | NoMain
+  | TypeMatch Type Type
+  | ArgNum Id Int Int
+  | DuplicateVar Id
+  | DuplicateFun Id
+  | DuplicateClass Id
+  | DuplicateField Id
+  | DuplicateMethod Id
+  | DuplicateConstructor (Maybe Id)
+  | ClassMatch Id Id
+  | UndefinedVar Id
+  | UndefinedFun Id
+  | UndefinedClass Id
+  | UndefinedField Id Id
+  | UndefinedMethod Id Id
+  | UndefinedConstructor Id (Maybe Id)
+  | NoReturn
+  | NotAClass Type
+  | NotInClass
 
-mainType :: String
-mainType = "plz man cant u into c? ? ? " <> emph "main" <> " muzzt B " <> emph "int main()"
+instance Pretty Error where
+  pPrint = \case
+    MainType ->
+      "plz man cant u into c? ? ? " <> emph "main" <> " muzzt B " <> emph "int main()"
+    NoMain ->
+      emph "main" <> " where r u"
+    TypeMatch t1 t2 ->
+      "Opsie Whoopsie x_x I kant metch typz!! me wnted " <>
+      emph (pPrint t1) <> " but @daddy@ gived " <> emph (pPrint t2) <> " but thx anyway Xoxox"
 
-noMain :: String
-noMain = emph "main" <> " where r u"
+    ArgNum f want giv ->
+      "boiiii cant you count. " <> emph (pPrint f) <> " wnt " <> emph (int want) <>
+      " argz and u gib me " <> emph (int giv)
 
-typeMatchError :: Type -> Type -> String
-typeMatchError t1 t2 =
-  "Opsie Whoopsie x_x I kant metch typz!! me wnted " <> emph (pp t1) <> " but @daddy@ giv " <> emph (pp t2) <> " but thx anyway Xoxox"
+    DuplicateVar i ->
+      "why r u doin " <> emph (pPrint i) <> " too much"
 
-argNumMismatch :: Int -> Int -> String
-argNumMismatch want giv = "boiiii cant you count. I wnt " <> emph (show want) <> " argz and u gib me " <> emph (show giv)
+    DuplicateFun i ->
+      "i know " <> emph (pPrint i) <> ". gimme some other boi lol"
 
-duplicateVar :: Id -> String
-duplicateVar i = "why r u doin " <> emph (pp i) <> " too much"
+    DuplicateClass i ->
+      "ok man. i get u looooooooov xoxoxox " <> emph (pPrint i) <> " but 1 is just enough"
 
-duplicateFun :: Id -> String
-duplicateFun i = "i know " <> emph (pp i) <> ". gimme some other boi lol"
+    DuplicateField i ->
+      "field field bald field, u know like in thiz song. too much " <> emph (pPrint i) <> " btw"
 
-duplicateClass :: Id -> String
-duplicateClass i = "ok man. i get u looooooooov xoxoxox " <> emph (pp i) <> " but 1 is just enough"
+    DuplicateMethod i ->
+      "MAN WHAT THE F XDXDXDDDD WHY SECOND " <> emph (pPrint i) <> " WTF WHY X'DD"
 
-duplicateField :: Id -> String
-duplicateField i = "field field bald field, u know like in thiz song. too much " <> emph (pp i) <> " btw"
+    DuplicateConstructor (Just i) ->
+      "Your constructor " <> emph (pPrint i) <> " seems to be redefined sir."
+    DuplicateConstructor Nothing ->
+      "Your unnamed constructor seems to be redefined sir."
 
-duplicateMethod :: Id -> String
-duplicateMethod i = "MAN WHAT THE F XDXDXDDDD WHY SECOND " <> emph (pp i) <> " WTF WHY X'DD"
+    ClassMatch c1 c2 ->
+      "i rly wish " <> emph (pPrint c1) <> " be @daddy@ of " <> emph (pPrint c2) <> " but itz not ;( ;((("
 
-duplicateConstructor :: Maybe Id -> String
-duplicateConstructor (Just i) = "Your constructor " <> emph (pp i) <> " seems to be redefined sir."
-duplicateConstructor Nothing = "Your unnamed constructor seems to be redefined sir."
+    UndefinedVar i ->
+      "wats thz little boi " <> emph (pPrint i) <> " uwu"
 
-classMatchError :: Id -> Id -> String
-classMatchError Id{iName = c1} Id{iName = c2} =
-  "i rly wish " <> emph c1 <> " be @daddy@ of " <> emph c2 <> " but itz not ;( ;((("
+    NoReturn ->
+      "som sneaky [B]oi can escape hier ;--; Mommy plz " <> emph ("return") <> " here  I lov u"
 
-undefinedVar :: Id -> String
-undefinedVar i =
-  "wats thz little boi " <> emph (iName i) <> " uwu"
+    UndefinedClass c ->
+      "XDDD WHAT THE HECK THIS " <> emph (pPrint c) <> " NOT EVEN A CLASS BRO LOLZ ROTFL"
 
-noReturn :: String
-noReturn =
-  "som sneaky [B]oi can escape hier ;--; Mommy plz " <> emph ("return") <> " here  I lov u"
+    NotAClass t ->
+      "cant hit that babe " <> emph (pPrint t) <> " bcoz itz not classy :c"
 
-undefinedClass :: Id -> String
-undefinedClass Id{iName = c} =
-  "XDDD WHAT THE HECK THIS " <> emph c <> " NOT EVEN A CLASS BRO LOLZ ROTFL"
+    UndefinedField c i ->
+      "u cant hev evryfffing bro, for exampl " <> emph (pPrint c) <> " cant hev " <> emph (pPrint i)
 
-notAClass :: Type -> String
-notAClass t = "cant hit that babe " <> emph (pp t) <> " bcoz itz not classy :c"
+    UndefinedMethod c i ->
+      "meffod nott ffund :( " <> emph (pPrint c) <> " misses " <> emph (pPrint i) <> " rip"
 
-noSuchField :: Id -> Id -> String
-noSuchField c i = "u cant hev evryfffing bro, for exampl " <> emph (pp c) <> " cant hev " <> emph (pp i)
+    UndefinedConstructor c (Just i) ->
+      emph (pPrint i) <> " is not the wey. to get " <> emph (pPrint c) <> " u need smth els"
+    UndefinedConstructor c Nothing ->
+      "no unnamed bois allowd in " <> emph (pPrint c)
 
-
-noSuchMethod :: Id -> Id -> String
-noSuchMethod c i = "meffod nott ffund :( " <> emph (pp c) <> " misses " <> emph (pp i) <> " rip"
-
-
-noSuchConstructor :: Id -> Maybe Id -> String
-noSuchConstructor c (Just i) =
-  emph (pp i) <> " is not the wey. to get " <> emph (pp c) <> " u need smth els"
-noSuchConstructor c Nothing =
-  "no unnamed bois allowd in " <> emph (pp c)
-
-
-notInClass :: String
-notInClass = emph "this" ++ " isnt a claz xC xC xC"
+    NotInClass ->
+      emph "this" <> " isnt a claz xC xC xC"

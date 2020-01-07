@@ -8,10 +8,10 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Latte.Frontend.IR where
 
+import Latte.Pretty
 import qualified Latte.Frontend.AST as AST
 import qualified Latte.Frontend.Typechecker as Tc
 
-import Text.PrettyPrint.HughesPJClass
 import Data.Maybe(catMaybes)
 import Data.String
 import Data.List(foldl', nub)
