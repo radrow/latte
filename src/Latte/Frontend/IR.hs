@@ -25,6 +25,7 @@ import Control.Lens hiding (Const)
 import Prelude hiding ((<>))
 
 data VarId = VarId {vId :: Int} deriving (Ord, Eq)
+
 data Label = Label {lId :: String} deriving (Ord, Eq)
 
 data Type = TInt Int | TString | TVoid | TObj Int [Type]
@@ -63,11 +64,11 @@ data RelOp = Eq | Neq | Lt | Le | Gt | Ge
 
 data Const = CVar VarId | CInt Integer | CStr String
 
-type VarMap = M.Map AST.Id VarId
+type VarMap = M.Map AST.VarId VarId
 type TypeMap = M.Map VarId Type
-type FieldMap = M.Map (AST.Id, AST.Id) Int
+type FieldMap = M.Map (AST.ClassId, AST.FieldId) Int
 -- | [(method, implementation -> classes)]
-type MethodMap = [(AST.Id, M.Map String [Int])]
+type MethodMap = [(AST.MethodId, M.Map String [Int])]
 
 data St = St
   { _stSupply :: Int
@@ -83,8 +84,8 @@ data Env = Env
   , _envBlockName    :: Label
   , _envNextBlock    :: Maybe Label
   , _envTopEnv       :: TopEnv
-  , _envCurrentClass :: Maybe AST.Id
-  , _envVirtReturn   :: Bool
+  , _envCurrentClass :: Maybe AST.ClassId
+  , _envDefaultRet   :: Maybe (Maybe Const)
   }
 initEnv :: Label -> Label -> TopCompiler Env
 initEnv r l = ask >>= \te -> pure Env
@@ -93,12 +94,12 @@ initEnv r l = ask >>= \te -> pure Env
   , _envNextBlock = Nothing
   , _envTopEnv = te
   , _envCurrentClass = Nothing
-  , _envVirtReturn = False
+  , _envDefaultRet = Nothing
   }
 
 data TopEnv = TopEnv
   { _tenvClassEnv :: Tc.ClassEnv
-  , _tenvClassIds :: M.Map AST.Id Int
+  , _tenvClassIds :: M.Map AST.ClassId Int
   , _tenvFieldEnv :: FieldMap
   }
 initTopEnv :: Tc.ClassEnv -> TopEnv
@@ -132,16 +133,16 @@ liftTop act = do
   e <- view topEnv
   return $ runReader act e
 
-labelFromId :: AST.Id -> Label
-labelFromId = Label . AST.iName
+labelFromId :: AST.HasIdStr a String => a -> Label
+labelFromId i = Label $ i^.AST.idStr
 
-makeConstructorName :: AST.Id -> Maybe AST.Id -> String
-makeConstructorName cname = \case
-  Nothing -> "cstr_" ++ AST.iName cname ++ "_unnamed_"
-  Just n -> "cstr_" ++ AST.iName cname ++ "_" ++ AST.iName n
+makeConstructorName :: Int -> Maybe AST.ConstructorId -> String
+makeConstructorName cid = \case
+  Nothing -> "cstr_" ++ show cid ++ "_unnamed_"
+  Just n -> "cstr_" ++ show cid ++ "_" ++ n^.AST.idStr
 
-makeMethodName :: Int -> AST.Id -> String
-makeMethodName ci mth = "mth_" ++ show ci ++ "_" ++ AST.iName mth
+makeMethodName :: Int -> AST.MethodId -> String
+makeMethodName ci mth = "mth_" ++ show ci ++ "_" ++ mth^.AST.idStr
 
 newSup :: Compiler Int
 newSup = do
@@ -155,24 +156,24 @@ newVar t = do
   modify $ over typeMap (M.insert i t)
   return i
 
-registerVar :: Type -> AST.Id -> Compiler VarId
+registerVar :: Type -> AST.VarId -> Compiler VarId
 registerVar t v = do
   i <- newVar t
   modify (over varMap (M.insert v i))
   return i
 
-loadVar :: AST.Id -> Compiler VarId
-loadVar i = uses varMap (maybe (error $ "no var? " ++ AST.iName i) id . M.lookup i)
+loadVar :: AST.VarId -> Compiler VarId
+loadVar i = uses varMap (maybe (error $ "no var? " ++ i^.AST.idStr) id . M.lookup i)
 
 localScope :: Compiler a -> Compiler a
 localScope k = do
   s <- get
-  r <- local (set virtReturn False) k
+  r <- local (set defaultRet Nothing) k
   modify (set varMap (s^.varMap) . set typeMap (s^.typeMap))
   return r
 
-constrName :: AST.Id -> Maybe AST.Id -> String
-constrName c mco = "cstr_" ++ AST.iName c ++ "_" ++ maybe "" AST.iName mco
+constrName :: AST.ClassId -> Maybe AST.ConstructorId -> String
+constrName c mco = "cstr_" ++ c^.AST.idStr ++ "_" ++ maybe "" (^.AST.idStr) mco
 
 makeLabel :: String -> Compiler Label
 makeLabel s = do
@@ -247,7 +248,7 @@ cExpr = \case
     asRefs <- mapM cExpr as
     t <- liftTop $ cType rt
     v <- newVar t
-    write $ [Assg t v (Call (AST.iName f) asRefs)]
+    write $ [Assg t v (Call (f^.AST.idStr) asRefs)]
     return $ CVar v
   AST.EProj _ t e fld -> do
     ce <- cExpr e
@@ -261,9 +262,8 @@ cExpr = \case
     ce <- cExpr e
     asRefs <- mapM cExpr as
     t <- liftTop $ cType rt
-    et <- liftTop $ cType (AST.getExprDec e)
     v <- newVar t
-    write $ [Assg t v (VCall (AST.iName m) (ce:asRefs))]
+    write $ [Assg t v (VCall (m^.AST.idStr) (ce:asRefs))]
     return $ CVar v
   AST.ENew _ t c n as -> do
     asRefs <- mapM cExpr as
@@ -342,6 +342,7 @@ cStmt = \case
       TObj _ _ -> write [Assg tt vi NewObj]
       TInt _ -> write [Assg tt vi (Const $ CInt 0)]
       TString -> write [Assg tt vi (Const $ CStr "")]
+      TVoid -> pure ()
     cStmt k
   AST.SIncr _ v k -> do
     t <- liftTop $ cType AST.TInt
@@ -395,13 +396,15 @@ cStmt = \case
     newBlock cl (cStmt k)
   AST.SEmpty _ -> do
     n <- view nextBlock
-    vret <- view virtReturn
+    dret <- view defaultRet
     cutBlock $ case n of
       Just nb -> Jmp nb
-      Nothing -> if vret then Ret Nothing else Unreachable
+      Nothing -> case dret of
+        Nothing -> Unreachable
+        Just r  -> Ret r
 
-compileBody :: Bool -> Label -> St -> AST.Stmt 'AST.Typed -> TopCompiler [Block]
-compileBody retVoid l st b = snd <$> liftCompiler l (local (set virtReturn retVoid) (cStmt b)) st
+compileBody :: Maybe (Maybe Const) -> Label -> St -> AST.Stmt 'AST.Typed -> TopCompiler [Block]
+compileBody defRet l st b = snd <$> liftCompiler l (local (set defaultRet defRet) (cStmt b)) st
 
 cFunDef :: AST.FunDef 'AST.Typed -> TopCompiler Routine
 cFunDef f = do
@@ -409,7 +412,7 @@ cFunDef f = do
   let argIds = map (VarId . negate) [1..length $ f^.AST.args]
       initVarMap = M.fromList $ zip (f^.AST.args <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
-  body <- compileBody (f^.AST.retType == AST.TVoid) (labelFromId $ f^.AST.name)
+  body <- compileBody (guard (f^.AST.retType == AST.TVoid) >> Just Nothing) (labelFromId $ f^.AST.name)
              (initSt initVarMap initTypeMap) (f^.AST.body)
   return $  Routine (labelFromId $ f^.AST.name) argIds body
 
@@ -419,8 +422,10 @@ cTopDef = \case
   AST.TDClass c ->
     fmap concat $ forM (c^.AST.body) $ \case
     AST.CMMethod mth -> cMethod (c^.AST.name) mth
+    AST.CMConstructor ctr -> cConstructor (c^.AST.name) ctr
+    AST.CMField _ -> return []
 
-cMethod :: AST.Id -> AST.Method 'AST.Typed -> TopCompiler [Routine]
+cMethod :: AST.ClassId -> AST.Method 'AST.Typed -> TopCompiler [Routine]
 cMethod cl mth@AST.Method{AST._methodBody = Just methodBody} = do
   let argsWithThis = AST.Arg { AST._argAnn = AST.fakeAnn
                              , AST._argName = "this"
@@ -433,10 +438,27 @@ cMethod cl mth@AST.Method{AST._methodBody = Just methodBody} = do
       initVarMap = M.fromList $ zip (argsWithThis <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
       labelName = Label $ makeMethodName classId (mth^.AST.name)
-  r <- compileBody (mth^.AST.retType == AST.TVoid) labelName
+  r <- compileBody (guard (mth^.AST.retType == AST.TVoid) >> Just Nothing) labelName
        (initSt initVarMap initTypeMap) (methodBody)
   return [Routine labelName argIds r]
 cMethod _ _ = return []
+
+cConstructor :: AST.ClassId -> AST.Constructor 'AST.Typed -> TopCompiler [Routine]
+cConstructor cl ctr = do
+  let argsWithThis = AST.Arg { AST._argAnn = AST.fakeAnn
+                             , AST._argName = "this"
+                             , AST._argTy = AST.TClass cl
+                             }
+                     : ctr^.AST.args
+  argTypes <- mapM cType (argsWithThis <&> (^.AST.ty))
+  classId <- views classIds (M.! cl) 
+  let argIds = map (VarId . negate) [1..length argsWithThis]
+      initVarMap = M.fromList $ zip (argsWithThis <&> (^.AST.name)) argIds
+      initTypeMap = M.fromList $ zip argIds argTypes
+      labelName = Label $ makeConstructorName classId (ctr^.AST.name)
+  r <- compileBody (Just (Just $ CVar (initVarMap M.! "this"))) labelName
+       (initSt initVarMap initTypeMap) (ctr^.AST.body)
+  return [Routine labelName argIds r]
 
 buildMethodMap :: TopCompiler MethodMap
 buildMethodMap = do
@@ -445,7 +467,7 @@ buildMethodMap = do
       allMethods = nub [m | (_, c) <- classes, m <- M.keys (c ^. Tc.methods)]
   flip execStateT [] $ forM_ allMethods $ \m -> do
     impls <- forM classes $ \(cn, _) -> do
-      let search :: AST.Id -> Maybe AST.Id
+      let search :: AST.ClassId -> Maybe AST.ClassId
           search c =
             let entry :: Tc.ClassEntry
                 entry = cenv M.! c

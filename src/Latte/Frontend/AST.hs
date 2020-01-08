@@ -27,9 +27,12 @@ data Lit
   | LBool Bool
   deriving (Show)
 
-newtype Id = Id {iName :: String}
-  deriving (Eq, Ord)
-
+newtype VarId = VarId {_vidIdStr :: String} deriving (Eq, Ord, Show)
+newtype FunId = FunId {_fnidIdStr :: String} deriving (Eq, Ord, Show)
+newtype ClassId = ClassId {_clidIdStr :: String} deriving (Eq, Ord, Show)
+newtype MethodId = MethodId {_midIdStr :: String} deriving (Eq, Ord, Show)
+newtype FieldId = FieldId {_flidIdStr :: String} deriving (Eq, Ord, Show)
+newtype ConstructorId = ConstructorId {_ctidIdStr :: String} deriving (Eq, Ord, Show)
 
 data Ann = Ann
   { _annFile :: FilePath
@@ -46,14 +49,14 @@ data Type
   | TInt
   | TBool
   | TString
-  | TClass Id
+  | TClass ClassId
   deriving (Eq)
 
 
 data Arg = Arg
   { _argAnn :: Ann
   , _argTy :: Type
-  , _argName :: Id
+  , _argName :: VarId
   }
 
 data OpType = Rel | Add | Mul | Log
@@ -107,31 +110,31 @@ instance Pretty UnOp where
 
 
 data RawExpr (l :: Nat) where
-  REOr    :: Ann -> RawExpr 1 -> RawExpr 0            -> RawExpr 0
-  REAnd   :: Ann -> RawExpr 2 -> RawExpr 1            -> RawExpr 1
-  RERelOp :: Ann -> Op 'Rel -> RawExpr 2 -> RawExpr 3 -> RawExpr 2
-  REAddOp :: Ann -> Op 'Add -> RawExpr 3 -> RawExpr 4 -> RawExpr 3
-  REMulOp :: Ann -> Op 'Mul -> RawExpr 4 -> RawExpr 5 -> RawExpr 4
-  RENot   :: Ann -> RawExpr 6                         -> RawExpr 5
-  RENeg   :: Ann -> RawExpr 6                         -> RawExpr 5
-  REProj  :: Ann -> RawExpr 6 -> Id                   -> RawExpr 6
-  REMApp  :: Ann -> RawExpr 6 -> Id -> [RawExpr 0]    -> RawExpr 6
-  RELit   :: Ann -> Lit                               -> RawExpr 7
-  REApp   :: Ann -> Id -> [RawExpr 0]                 -> RawExpr 7
-  RENew   :: Ann -> Id -> Maybe Id -> [RawExpr 0]     -> RawExpr 7
-  REVar   :: Ann -> Id                                -> RawExpr 7
-  REPar   :: Ann -> RawExpr 0                         -> RawExpr 7
-  RECoe   ::        RawExpr (n + 1)                   -> RawExpr n
+  REOr    :: Ann -> RawExpr 1 -> RawExpr 0                  -> RawExpr 0
+  REAnd   :: Ann -> RawExpr 2 -> RawExpr 1                  -> RawExpr 1
+  RERelOp :: Ann -> Op 'Rel -> RawExpr 2 -> RawExpr 3       -> RawExpr 2
+  REAddOp :: Ann -> Op 'Add -> RawExpr 3 -> RawExpr 4       -> RawExpr 3
+  REMulOp :: Ann -> Op 'Mul -> RawExpr 4 -> RawExpr 5       -> RawExpr 4
+  RENot   :: Ann -> RawExpr 6                               -> RawExpr 5
+  RENeg   :: Ann -> RawExpr 6                               -> RawExpr 5
+  REProj  :: Ann -> RawExpr 6 -> FieldId                    -> RawExpr 6
+  REMApp  :: Ann -> RawExpr 6 -> MethodId -> [RawExpr 0]    -> RawExpr 6
+  RELit   :: Ann -> Lit                                     -> RawExpr 7
+  REApp   :: Ann -> FunId   -> [RawExpr 0]                  -> RawExpr 7
+  RENew   :: Ann -> ClassId -> Maybe ConstructorId -> [RawExpr 0] -> RawExpr 7
+  REVar   :: Ann -> VarId                                   -> RawExpr 7
+  REPar   :: Ann -> RawExpr 0                               -> RawExpr 7
+  RECoe   ::        RawExpr (n + 1)                         -> RawExpr n
 
 type E = RawExpr 0
 
 
 data RawStmt
-  = RSAssg Ann Id E
-  | RSFieldAssg Ann E Id E
-  | RSDecl Ann Type (NonEmpty (Id, Maybe E))
-  | RSIncr Ann Id
-  | RSDecr Ann Id
+  = RSAssg Ann VarId E
+  | RSFieldAssg Ann E FieldId E
+  | RSDecl Ann Type (NonEmpty (VarId, Maybe E))
+  | RSIncr Ann VarId
+  | RSDecr Ann VarId
   | RSRet Ann E
   | RSVRet Ann
   | RSCond Ann E RawStmt
@@ -150,21 +153,21 @@ type family ExprDecoration (s :: Stage) where
 
 data Expr (s :: Stage) where
   ELit  :: Ann -> ExprDecoration s -> Lit -> Expr s
-  EApp  :: Ann -> ExprDecoration s -> Id -> [Expr s] -> Expr s
-  EVar  :: Ann -> ExprDecoration s -> Id -> Expr s
+  EApp  :: Ann -> ExprDecoration s -> FunId -> [Expr s] -> Expr s
+  EVar  :: Ann -> ExprDecoration s -> VarId -> Expr s
   EUnOp :: Ann -> ExprDecoration s -> UnOp -> Expr s -> Expr s
   EOp   :: Ann -> ExprDecoration s -> AnyOp -> Expr s -> Expr s -> Expr s
-  EProj :: Ann -> ExprDecoration s -> Expr s -> Id -> Expr s
-  EMApp :: Ann -> ExprDecoration s -> Expr s  -> Id -> [Expr s] -> Expr s
-  ENew :: Ann -> ExprDecoration s -> Id -> Maybe Id -> [Expr s] -> Expr s
+  EProj :: Ann -> ExprDecoration s -> Expr s -> FieldId -> Expr s
+  EMApp :: Ann -> ExprDecoration s -> Expr s -> MethodId -> [Expr s] -> Expr s
+  ENew :: Ann -> ExprDecoration s -> ClassId -> Maybe ConstructorId -> [Expr s] -> Expr s
 
 
 data Stmt (e :: Stage)
-  = SAssg Ann Id (Expr e) (Stmt e)
-  | SFieldAssg Ann (Expr e) Id (Expr e) (Stmt e)
-  | SDecl Ann Type Id (Stmt e)
-  | SIncr Ann Id (Stmt e)
-  | SDecr Ann Id (Stmt e)
+  = SAssg Ann VarId (Expr e) (Stmt e)
+  | SFieldAssg Ann (Expr e) FieldId (Expr e) (Stmt e)
+  | SDecl Ann Type VarId (Stmt e)
+  | SIncr Ann VarId (Stmt e)
+  | SDecr Ann VarId (Stmt e)
   | SRet Ann (Expr e) (Stmt e)
   | SVRet Ann (Stmt e)
   | SCond Ann (Expr e) (Stmt e) (Stmt e)
@@ -238,15 +241,15 @@ getExprDec = \case
 data FunDef (s :: Stage) = FunDef
   { _fundefAnn :: Ann
   , _fundefRetType :: Type
-  , _fundefName :: Id
+  , _fundefName :: FunId
   , _fundefArgs :: [Arg]
   , _fundefBody :: Stmt s
   }
 
 data ClassDef (s :: Stage) = ClassDef
   { _classdefAnn :: Ann
-  , _classdefName :: Id
-  , _classdefSuper :: Maybe Id
+  , _classdefName :: ClassId
+  , _classdefSuper :: Maybe ClassId
   , _classdefBody :: [ClassMember s]
   }
 
@@ -259,7 +262,7 @@ data Method (s :: Stage) = Method
   , _methodAccess :: ClassMemberAccess
   , _methodPlace :: ClassMemberPlace
   , _methodRetType :: Type
-  , _methodName :: Id
+  , _methodName :: MethodId
   , _methodArgs :: [Arg]
   , _methodBody :: Maybe (Stmt s)
   }
@@ -269,13 +272,13 @@ data Field (s :: Stage) = Field
   , _fieldAccess :: ClassMemberAccess
   , _fieldPlace :: ClassMemberPlace
   , _fieldTy :: Type
-  , _fieldAssignments :: NonEmpty (Id, Maybe (Expr s))
+  , _fieldAssignments :: NonEmpty (FieldId, Maybe (Expr s))
   }
 
 data Constructor (s :: Stage) = Constructor
   { _constructorAnn :: Ann
   , _constructorAccess :: ClassMemberAccess
-  , _constructorName :: Maybe Id
+  , _constructorName :: Maybe ConstructorId
   , _constructorArgs :: [Arg]
   , _constructorBody :: Stmt s
   }
@@ -294,6 +297,12 @@ data ClassMemberAccess = Private | Public
 newtype Program (s :: Stage) = Program [TopDef s]
 
 
+makeLensesWith abbreviatedFields ''VarId
+makeLensesWith abbreviatedFields ''FunId
+makeLensesWith abbreviatedFields ''ClassId
+makeLensesWith abbreviatedFields ''FieldId
+makeLensesWith abbreviatedFields ''MethodId
+makeLensesWith abbreviatedFields ''ConstructorId
 makeLensesWith abbreviatedFields ''Ann
 makeLensesWith abbreviatedFields ''Arg
 makeLensesWith abbreviatedFields ''Type
@@ -303,16 +312,44 @@ makeLensesWith abbreviatedFields ''Method
 makeLensesWith abbreviatedFields ''Field
 makeLensesWith abbreviatedFields ''Constructor
 
+class (HasIdStr a String, Ord a, Eq a) => IsId a where
+instance (HasIdStr a String, Ord a, Eq a) => IsId a where
 
-instance Show Id where
-  show = iName
+instance IsString VarId where
+  fromString = VarId
 
-instance IsString Id where
-  fromString = Id
+instance IsString FunId where
+  fromString = FunId
 
-instance Pretty Id where
-  pPrint i = text $ iName i
+instance IsString ClassId where
+  fromString = ClassId
 
+instance IsString FieldId where
+  fromString = FieldId
+
+instance IsString MethodId where
+  fromString = MethodId
+
+instance IsString ConstructorId where
+  fromString = ConstructorId
+
+instance Pretty VarId where
+  pPrint i = text $ i^.idStr
+
+instance Pretty FunId where
+  pPrint i = text $ i^.idStr
+
+instance Pretty ClassId where
+  pPrint i = text $ i^.idStr
+
+instance Pretty FieldId where
+  pPrint i = text $ i^.idStr
+
+instance Pretty MethodId where
+  pPrint i = text $ i^.idStr
+
+instance Pretty ConstructorId where
+  pPrint i = text (i^.idStr)
 
 instance Pretty Arg where
   pPrint (Arg _ t i) = pPrint t <+> pPrint i
@@ -428,7 +465,7 @@ instance Pretty (Field a) where
 instance Pretty (Constructor a) where
   pPrint c =
     "new" <+>
-    maybe empty pPrint (c^.name) <>
+    pPrint (c^.name) <>
     parens (cat $ punctuate comma $ map pPrint $ c^.args) <+>
     block (pPrint (c^.body))
 

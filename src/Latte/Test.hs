@@ -1,7 +1,6 @@
 module Latte.Test where
 
 import Latte.Pretty
-import Latte.Frontend.AST
 import Latte.Frontend.Parse
 import Latte.Frontend.Typechecker
 import qualified Latte.Frontend.IR as IR

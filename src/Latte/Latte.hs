@@ -2,7 +2,6 @@ module Latte.Latte where
 
 import Latte.Frontend.Parse
 
-import Latte.Frontend.AST
 import Latte.Frontend.Typechecker
 import qualified Latte.Frontend.IR as IR
 import qualified Latte.Backend.X86.Compile as X86

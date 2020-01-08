@@ -71,6 +71,10 @@ lId :: Parser String
 lId = lex $ liftA2 (:) lowerChar (many alphaNumChar)
 
 
+uId :: Parser String
+uId = lex $ liftA2 (:) upperChar (many alphaNumChar)
+
+
 signed :: Parser Integer
 signed = lex $ L.decimal
 
@@ -104,9 +108,29 @@ infixL op p x = do
   infixL op p r <|> return r
 
 
-ident :: Parser AST.Id
-ident =  try $ lId >>= \i -> if (i `elem` keywords)
-  then fail $ "Forbidden id: " ++ i else pure (AST.Id i)
+varId :: Parser AST.VarId
+varId =  try $ lId >>= \i -> if (i `elem` keywords)
+  then fail $ "Forbidden id: " ++ i else pure (AST.VarId i)
+
+funId :: Parser AST.FunId
+funId =  try $ lId >>= \i -> if (i `elem` keywords)
+  then fail $ "Forbidden id: " ++ i else pure (AST.FunId i)
+
+classId :: Parser AST.ClassId
+classId =  try $ lId >>= \i -> if (i `elem` keywords)
+  then fail $ "Forbidden id: " ++ i else pure (AST.ClassId i)
+
+fieldId :: Parser AST.FieldId
+fieldId =  try $ lId >>= \i -> if (i `elem` keywords)
+  then fail $ "Forbidden id: " ++ i else pure (AST.FieldId i)
+
+methodId :: Parser AST.MethodId
+methodId =  try $ lId >>= \i -> if (i `elem` keywords)
+  then fail $ "Forbidden id: " ++ i else pure (AST.MethodId i)
+
+constructorId :: Parser AST.ConstructorId
+constructorId =  try $ lId >>= \i -> if (i `elem` keywords)
+  then fail $ "Forbidden id: " ++ i else pure (AST.ConstructorId i)
 
 
 lit :: Parser AST.Lit
@@ -197,11 +221,13 @@ expr5 = choice
 expr6 :: Parser (AST.RawExpr 6)
 expr6 = do
   e <- AST.RECoe <$> expr7
-  let proj = do
-        i <- ident
-        optional appliedArgs >>= \case
-          Nothing -> return $ Left i
-          Just as -> return $ Right (i, as)
+  let proj = choice
+        [ Right <$> do
+            i <- methodId
+            as <- appliedArgs
+            return (i, as)
+        , Left <$> fieldId
+        ]
       fldOrMth a l r = case r of
         Left i -> AST.REProj a l i
         Right (i, as) -> AST.REMApp a l i as
@@ -214,26 +240,26 @@ expr7 :: Parser (AST.RawExpr 7)
 expr7 = choice
   [ withAnnP AST.REPar <*> paren expr0
   , withAnnP AST.RELit <*> lit
-  , try $ withAnnP AST.REApp <*> ident <*> appliedArgs
-  , withAnnP AST.RENew <*> (word "new" *> ident) <*> optional (symbol "." *> ident)
+  , try $ withAnnP AST.REApp <*> funId <*> appliedArgs
+  , withAnnP AST.RENew <*> (word "new" *> classId) <*> optional (symbol "." *> constructorId)
     <*> paren (sepBy expr0 (symbol ","))
-  , withAnnP AST.REVar <*> ident
+  , withAnnP AST.REVar <*> varId
   ]
 
 
-rawDecl :: Parser (AST.Id, Maybe (AST.RawExpr 0))
-rawDecl = liftA2 (,) (try $ ident <* operator "=") (Just <$> rawExpr)
-  <|> liftA2 (,) ident (pure Nothing)
+rawDecl :: AST.IsId id => Parser id -> Parser (id, Maybe (AST.RawExpr 0))
+rawDecl p = liftA2 (,) (try $ p <* operator "=") (Just <$> rawExpr)
+  <|> liftA2 (,) p (pure Nothing)
 
-rawDecls :: Parser (NE.NonEmpty (AST.Id, Maybe (AST.RawExpr 0)))
-rawDecls = sepBy1 rawDecl (symbol ",")
+rawDecls :: AST.IsId id => Parser id -> Parser (NE.NonEmpty (id, Maybe (AST.RawExpr 0)))
+rawDecls p = sepBy1 (rawDecl p) (symbol ",")
 
-decl :: Parser (AST.Id, Maybe (AST.Expr 'AST.Untyped))
-decl = fmap (fmap AST.entailExpr) <$> rawDecl
+decl :: AST.IsId id => Parser id -> Parser (id, Maybe (AST.Expr 'AST.Untyped))
+decl p = fmap (fmap AST.entailExpr) <$> rawDecl p
 
 
-decls :: Parser (NE.NonEmpty (AST.Id, Maybe (AST.Expr 'AST.Untyped)))
-decls = sepBy1 decl (symbol ",")
+decls :: AST.IsId id => Parser id -> Parser (NE.NonEmpty (id, Maybe (AST.Expr 'AST.Untyped)))
+decls p = sepBy1 (decl p) (symbol ",")
 
 
 semicolon :: Parser ()
@@ -245,10 +271,10 @@ appliedArgs = paren (sepBy expr0 (symbol ","))
 stmt :: Parser AST.RawStmt
 stmt = choice
   [ block
-  , withAnnP AST.RSAssg <*> try (ident <* operator "=") <*> rawExpr <* semicolon
-  , try $ withAnnP AST.RSDecl <*> type_ <*> rawDecls <* semicolon
-  , withAnnP AST.RSIncr <*> try (ident <* operator "++") <* semicolon
-  , withAnnP AST.RSDecr <*> try (ident <* operator "--") <* semicolon
+  , withAnnP AST.RSAssg <*> try (varId <* operator "=") <*> rawExpr <* semicolon
+  , try $ withAnnP AST.RSDecl <*> type_ <*> rawDecls varId <* semicolon
+  , withAnnP AST.RSIncr <*> try (varId <* operator "++") <* semicolon
+  , withAnnP AST.RSDecr <*> try (varId <* operator "--") <* semicolon
   , withAnnP AST.RSRet <*> (try $ word "return" *> rawExpr) <* semicolon
   , withAnn (AST.RSVRet <$ word "return") <* semicolon
   , withAnnP (\a c t me -> case me of
@@ -281,12 +307,12 @@ type_ = choice
   , AST.TBool <$ word "boolean"
   , AST.TString <$ word "string"
   , AST.TVoid <$ word "void"
-  , AST.TClass <$> ident
+  , AST.TClass <$> classId
   ]
 
 
 arg :: Parser AST.Arg
-arg = withAnnP AST.Arg <*> type_ <*> ident
+arg = withAnnP AST.Arg <*> type_ <*> varId
 
 args :: Parser [AST.Arg]
 args = paren (sepBy arg (symbol ","))
@@ -300,14 +326,14 @@ topDef = choice
 
 classDef :: Parser (AST.ClassDef 'AST.Untyped)
 classDef = withAnnP AST.ClassDef
-  <*> try (word "class" *> ident)
-  <*> optional (word "extends" *> ident)
+  <*> try (word "class" *> classId)
+  <*> optional (word "extends" *> classId)
   <*> brac (many classMember)
 
 funDef :: Parser (AST.FunDef 'AST.Untyped)
 funDef = withAnnP AST.FunDef
   <*> type_
-  <*> ident
+  <*> funId
   <*> args
   <*> body
 
@@ -324,7 +350,7 @@ method = withAnnP AST.Method
   <*> classMemberAccess
   <*> classMemberPlace
   <*> type_
-  <*> ident
+  <*> methodId
   <*> args
   <*> optional body
 
@@ -333,13 +359,13 @@ field = withAnnP AST.Field
   <*> classMemberAccess
   <*> classMemberPlace
   <*> type_
-  <*> decls
+  <*> decls fieldId
   <* semicolon
 
 constructor :: Parser (AST.Constructor 'AST.Untyped)
 constructor = withAnnP AST.Constructor
   <*> (word "new" *> classMemberAccess)
-  <*> optional ident
+  <*> optional constructorId
   <*> args
   <*> body
 

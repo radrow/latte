@@ -275,9 +275,9 @@ cRoutine (IR.Routine (IR.Label rname) args blocks) = do
     sub (OConst $ fromIntegral $ length locals * 4) esp
     forM_ blocks cBlock
 
-cMethodDispatcher :: AST.Id -> M.Map String [Int] -> Compiler ()
+cMethodDispatcher :: AST.MethodId -> M.Map String [Int] -> Compiler ()
 cMethodDispatcher m implMap = do
-  label (makeMethodDispatcherName $ AST.iName m)
+  label (makeMethodDispatcherName $ m^.AST.idStr)
   push ebp
   mov esp ebp
   mov (mem (8 :: Int) EBP :: Operand) eax

@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Latte.Frontend.Error where
 
-import Control.Monad.Except
 import Latte.Frontend.AST
 import Latte.Pretty
 import Prelude hiding ((<>))
@@ -12,20 +11,22 @@ data Error
   = MainType
   | NoMain
   | TypeMatch Type Type
-  | ArgNum Id Int Int
-  | DuplicateVar Id
-  | DuplicateFun Id
-  | DuplicateClass Id
-  | DuplicateField Id
-  | DuplicateMethod Id
-  | DuplicateConstructor (Maybe Id)
-  | ClassMatch Id Id
-  | UndefinedVar Id
-  | UndefinedFun Id
-  | UndefinedClass Id
-  | UndefinedField Id Id
-  | UndefinedMethod Id Id
-  | UndefinedConstructor Id (Maybe Id)
+  | ArgNumFun FunId Int Int
+  | ArgNumMethod ClassId MethodId Int Int
+  | ArgNumConstructor ClassId (Maybe ConstructorId) Int Int
+  | DuplicateVar VarId
+  | DuplicateFun FunId
+  | DuplicateClass ClassId
+  | DuplicateField ClassId FieldId
+  | DuplicateMethod ClassId MethodId
+  | DuplicateConstructor ClassId (Maybe ConstructorId)
+  | ClassMatch ClassId ClassId
+  | UndefinedVar VarId
+  | UndefinedFun FunId
+  | UndefinedClass ClassId
+  | UndefinedField ClassId FieldId
+  | UndefinedMethod ClassId MethodId
+  | UndefinedConstructor ClassId (Maybe ConstructorId)
   | NoReturn
   | NotAClass Type
   | NotInClass
@@ -40,9 +41,17 @@ instance Pretty Error where
       "Opsie Whoopsie x_x I kant metch typz!! me wnted " <>
       emph (pPrint t1) <> " but @daddy@ gived " <> emph (pPrint t2) <> " but thx anyway Xoxox"
 
-    ArgNum f want giv ->
+    ArgNumFun f want giv ->
       "boiiii cant you count. " <> emph (pPrint f) <> " wnt " <> emph (int want) <>
       " argz and u gib me " <> emph (int giv)
+
+    ArgNumMethod cl m want giv ->
+      emph (pPrint m) <> " 'o " <> emph (pPrint cl) <> " cant stand " <> emph (int giv) <> " argz uwu " <>
+      "butt only " <> emph (int want) <> " :c"
+
+    ArgNumConstructor cl cr want giv ->
+      "cant build " <> emph (pPrint cl) <> " wiv " <> emph (maybe "noname constructor" pPrint cr) <>
+      " and its sweeeeet bff team ^.^ of " <> emph (int giv) <> " argz. U need " <> emph (int want) <> " argz." 
 
     DuplicateVar i ->
       "why r u doin " <> emph (pPrint i) <> " too much"
@@ -53,22 +62,27 @@ instance Pretty Error where
     DuplicateClass i ->
       "ok man. i get u looooooooov xoxoxox " <> emph (pPrint i) <> " but 1 is just enough"
 
-    DuplicateField i ->
-      "field field bald field, u know like in thiz song. too much " <> emph (pPrint i) <> " btw"
+    DuplicateField c i ->
+      "field field bald field, u know like in thiz song. too much " <> emph (pPrint i) <>
+      " in " <> emph (pPrint c) <> " btw"
 
-    DuplicateMethod i ->
-      "MAN WHAT THE F XDXDXDDDD WHY SECOND " <> emph (pPrint i) <> " WTF WHY X'DD"
+    DuplicateMethod c i ->
+      "MAN WHAT THE F XDXDXDDDD WHY SECOND " <> emph (pPrint i) <> " WTF WHY X'DD " <>
+      emph (pPrint c) <> " is ful of it man plz"
 
-    DuplicateConstructor (Just i) ->
-      "Your constructor " <> emph (pPrint i) <> " seems to be redefined sir."
-    DuplicateConstructor Nothing ->
-      "Your unnamed constructor seems to be redefined sir."
+    DuplicateConstructor cl (Just i) ->
+      "Your constructor " <> emph (pPrint i) <> " of class " <> emph (pPrint cl) <> " seems to be redefined sir."
+    DuplicateConstructor cl Nothing ->
+      "ErRORrrr iN CLAS " <> emph (pPrint cl) <> ". . . . " <> emph ("noname constructor") <> " iS DUPliCatED"
 
     ClassMatch c1 c2 ->
       "i rly wish " <> emph (pPrint c1) <> " be @daddy@ of " <> emph (pPrint c2) <> " but itz not ;( ;((("
 
     UndefinedVar i ->
       "wats thz little boi " <> emph (pPrint i) <> " uwu"
+
+    UndefinedFun i ->
+      "Ich kenne keine " <> emph (pPrint i) <> " Funktion. Können Sie es implementieren?"
 
     NoReturn ->
       "som sneaky [B]oi can escape hier ;--; Mommy plz " <> emph ("return") <> " here  I lov u"
