@@ -4,7 +4,9 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
 module Latte.Frontend.Typechecker where
 
 import Latte.Frontend.AST
@@ -16,19 +18,26 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Map(Map)
 import qualified Data.List.NonEmpty as NE
-import Control.Applicative
+import Control.Applicative hiding (empty)
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Lens
 
-import Prelude hiding (LT, GT, EQ)
+import Prelude hiding (LT, GT, EQ, (<>))
+import qualified Prelude as P
 
 
-type LangError = [String]
+newtype ErrorPack = ErrorPack (NE.NonEmpty (Maybe Ann, Error))
+  deriving (Semigroup)
+instance Pretty ErrorPack where
+  pPrint (ErrorPack ers) = vcat (punctuate "\n" $ fmap prnt $ NE.toList ers) where
+    prnt (ma, e) = maybe empty pPrint ma <> ":" <+> pPrint e
 
 type Typechecker =
-  ReaderT TypecheckerEnv (Except String)
+  ExceptT ErrorPack (Reader TypecheckerEnv)
+type TopTypechecker =
+  Except ErrorPack
 
 type VarEnv   = Map VarId Type
 type FunEnv   = Map FunId (Type, [Type])
@@ -53,6 +62,7 @@ data TypecheckerEnv = TypecheckerEnv
   , _teCurrentScopeVars :: S.Set VarId
   }
 
+
 initialEnv :: TypecheckerEnv
 initialEnv = TypecheckerEnv
   { _teDefinedVars      = M.singleton "void" TVoid
@@ -71,23 +81,27 @@ initialEnv = TypecheckerEnv
   , _teCurrentScopeVars = S.empty
   }
 
+
 makeLensesWith abbreviatedFields ''TypecheckerEnv
 makeLensesWith abbreviatedFields ''ClassEntry
 
+
 raiseError :: Error -> Typechecker a
-raiseError e = view loc >>= \a -> throwError $ maybe "" pp a ++ ": " ++ pp e
+raiseError e = view loc >>= \a -> throwError $ ErrorPack $ pure (a, e)
 
-raiseErrorAt :: MonadError String m => Ann -> Error -> m a
-raiseErrorAt a e = throwError $ pp a ++ ": " ++ pp e
+raiseErrorAt :: MonadError ErrorPack m => Ann -> Error -> m a
+raiseErrorAt a e = throwError $ ErrorPack $ pure (Just a, e)
 
-raiseErrorNoLoc :: MonadError String m => Error -> m a
-raiseErrorNoLoc e = throwError $ pp e
+raiseErrorNoLoc :: MonadError ErrorPack m => Error -> m a
+raiseErrorNoLoc e = throwError $ ErrorPack $ pure (Nothing, e)
+
 
 withAnn :: Ann -> Typechecker a -> Typechecker a
 withAnn a = local (set loc (Just a))
 
 withAnnOf :: HasAnn h Ann => h -> Typechecker a -> Typechecker a
 withAnnOf h = withAnn (h^.ann)
+
 
 getClassEntry :: ClassId -> Typechecker ClassEntry
 getClassEntry i = views classEnv (M.lookup i) >>= \case
@@ -174,7 +188,10 @@ tcOp o l r =
     Op (NEQ a)   -> withAnn a $ matchTypes l r $> TBool
     Op (GEQ a)   -> withAnn a $ tc TInt $> TBool
     Op (GT a)    -> withAnn a $ tc TInt $> TBool
-    Op (Plus a)  -> withAnn a $ (tc TInt $> TInt) <|> (tc TString $> TString)
+    Op (Plus a)  -> withAnn a $ case (l, r) of
+      (TInt, TInt) -> pure TInt
+      (TString, TString) -> pure TString
+      _ -> raiseError (OperatorTypeMatch o [(TInt, TInt), (TString, TString)] (l, r))
     Op (Minus a) -> withAnn a $ tc TInt $> TInt
     Op (Mult a)  -> withAnn a $ tc TInt $> TInt
     Op (Div a)   -> withAnn a $ tc TInt $> TInt
@@ -249,12 +266,12 @@ currentRetType = maybe (error "fun env not in a funtion") id <$>
 newScope :: Typechecker a -> Typechecker a
 newScope = local (set currentScopeVars S.empty)
 
+
 tcStmt :: Stmt 'Untyped -> Typechecker (Stmt 'Typed)
 tcStmt = \case
   SDecl a t v k -> withAnn a $ do
     vars <- view currentScopeVars
-    when (S.member v vars) $
-      raiseError $ DuplicateVar v
+    when (S.member v vars) (raiseError $ DuplicateVar v)
     local (over definedVars (M.insert v t) . over currentScopeVars (S.insert v)) $
       SDecl a t v <$> tcStmt k
   SAssg a v e k -> withAnn a $ do
@@ -353,7 +370,7 @@ buildClassEntry c = ClassEntry
              ]
   }
 
-buildInitialEnv :: [TopDef 'Untyped] -> Except String TypecheckerEnv
+buildInitialEnv :: [TopDef 'Untyped] -> TopTypechecker TypecheckerEnv
 buildInitialEnv defs = do
   when (null [() | TDFun fdef <- defs, fdef^.name == "main"]) $
     raiseErrorNoLoc NoMain
@@ -370,8 +387,8 @@ buildInitialEnv defs = do
                when (cd^.name `elem` (M.keys $ prev^.classEnv)) $
                  raiseErrorAt (cd^.ann) $ DuplicateClass (cd^.name)
                let ce = buildClassEntry cd
-                   checkDups :: (MonadError String m, Ord s)
-                             => [(Ann, x)] -> (x -> s) -> (s -> Error) -> m ()
+                   checkDups :: (Ord s)
+                             => [(Ann, x)] -> (x -> s) -> (s -> Error) -> TopTypechecker ()
                    checkDups vals getname err = flip evalStateT S.empty $ forM_ vals $ \(a, f) -> do
                      jeb <- gets $ S.member (getname f)
                      when jeb $ raiseErrorAt a $ err (getname f)
@@ -460,7 +477,7 @@ tcTopDef = \case
 tcProgram :: Program 'Untyped -> Typechecker (Program 'Typed)
 tcProgram (Program defs) = Program <$> mapM tcTopDef defs
 
-typecheck :: Program 'Untyped -> Either String (ClassEnv, Program 'Typed)
-typecheck p@(Program defs) = runExcept $ do
-  env <- buildInitialEnv defs
-  runReaderT ((,) (env^.classEnv) <$> tcProgram p) env
+typecheck :: Program 'Untyped -> Either ErrorPack (ClassEnv, Program 'Typed)
+typecheck p@(Program defs) = do
+  env <- runExcept $ buildInitialEnv defs
+  flip runReader env . runExceptT $ ((,) (env^.classEnv) <$> tcProgram p)

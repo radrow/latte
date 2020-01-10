@@ -483,14 +483,16 @@ instance Pretty (Program a) where
   pPrint (Program defs) = vcat $ map pPrint defs
 
 
--- instance HasAnn (Expr p) Ann where
---   ann = \case
---     ELit a _ _ -> a
---     EVar a _ _ -> a
---     EApp a _ _ _ -> a
---     EUnOp a _ _ _ -> a
---     EOp  a _ _ _ _ -> a
-
+instance HasAnn (Expr p) Ann where
+  ann f = \case
+    ELit a dec l -> fmap (\a2 -> ELit a2 dec l) (f a)
+    EVar a dec v -> fmap (\a2 -> EVar a2 dec v) (f a)
+    EApp a dec fname as -> fmap (\a2 -> EApp a2 dec fname as) (f a)
+    EUnOp a dec o v -> fmap (\a2 -> EUnOp a2 dec o v) (f a)
+    EOp a dec o l r -> fmap (\a2 -> EOp a2 dec o l r) (f a)
+    EProj a dec e i -> fmap (\a2 -> EProj a2 dec e i) (f a)
+    EMApp a dec e i as -> fmap (\a2 -> EMApp a2 dec e i as) (f a)
+    ENew a dec c i as -> fmap (\a2 -> ENew a2 dec c i as) (f a)
 
 -- instance HasAnn (Stmt s) Ann where
 --   ann = \case

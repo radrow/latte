@@ -5,19 +5,19 @@ import Latte.Frontend.Parse
 import Latte.Frontend.Typechecker
 import qualified Latte.Frontend.IR as IR
 import qualified Latte.Backend.X86.Compile as X86
-
+import Data.Bifunctor as BF
 
 import Data.Text(pack)
 
 testX86 :: String -> IO ()
 testX86 s =
-  case runLatteParser program "test" (pack s) >>= typecheck of
+  case runLatteParser program "test" (pack s) >>= BF.first pp . typecheck of
     Left e -> putStrLn e
     Right (ce, p) -> putStrLn $ pp (uncurry (flip X86.compile) $ IR.compile ce p)
 
 testIR :: String -> IO ()
 testIR s =
-  case runLatteParser program "test" (pack s) >>= typecheck of
+  case runLatteParser program "test" (pack s) >>= BF.first pp . typecheck of
     Left e -> putStrLn e
     Right (ce, p) ->
       let (ir, mm) = IR.compile ce p
@@ -25,7 +25,7 @@ testIR s =
 
 testAST :: String -> IO ()
 testAST s =
-  case runLatteParser program "test" (pack s) >>= typecheck of
+  case runLatteParser program "test" (pack s) >>= BF.first pp . typecheck of
     Left e -> putStrLn e
     Right (_, p) -> putStrLn $ pp p
 

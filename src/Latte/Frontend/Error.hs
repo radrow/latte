@@ -11,6 +11,7 @@ data Error
   = MainType
   | NoMain
   | TypeMatch Type Type
+  | OperatorTypeMatch AnyOp [(Type, Type)] (Type, Type)
   | ArgNumFun FunId Int Int
   | ArgNumMethod ClassId MethodId Int Int
   | ArgNumConstructor ClassId (Maybe ConstructorId) Int Int
@@ -40,6 +41,12 @@ instance Pretty Error where
     TypeMatch t1 t2 ->
       "Opsie Whoopsie x_x I kant metch typz!! me wnted " <>
       emph (pPrint t1) <> " but @daddy@ gived " <> emph (pPrint t2) <> " but thx anyway Xoxox"
+
+    OperatorTypeMatch o goods (badL, badR) ->
+      "Dud, " <> emph (pPrint o) <> " hav soooo MANY winky-chicky suits ;3 look at them *.* " <>
+      emph (vcat [pPrint l <+> pPrint o <+> pPrint r | (l, r) <- goods]) $+$
+      " and u giv " <>
+      emph (pPrint badL <+> pPrint o <+> pPrint badR) <+> " -,-"
 
     ArgNumFun f want giv ->
       "boiiii cant you count. " <> emph (pPrint f) <> " wnt " <> emph (int want) <>
