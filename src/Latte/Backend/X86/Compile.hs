@@ -50,14 +50,14 @@ nextSup = do
 makeLabel :: String -> Compiler String
 makeLabel s = do
   i <- nextSup
-  let l = s ++ show i
+  let l = "__" ++ s ++ show i
   label l
   return l
 
 makeStrName :: String -> Compiler String
 makeStrName s = do
   i <- nextSup
-  return $ "local_str_" ++ filter isAlphaNum s ++ "_" ++ show i
+  return $ "__local_str_" ++ filter isAlphaNum s ++ "_" ++ show i
 
 requestStr :: String -> Compiler String
 requestStr s = do
@@ -155,7 +155,7 @@ sizeOf = \case
   _ -> return 4
 
 makeMethodDispatcherName :: String -> String
-makeMethodDispatcherName s = "__" ++ s ++ "__dispatch"
+makeMethodDispatcherName s = "__" ++ s ++ "_dispatch"
 
 cExpr :: IR.Type -> Operand -> IR.Expr -> Compiler ()
 cExpr t vloc e = case e of
