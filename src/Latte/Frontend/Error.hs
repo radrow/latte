@@ -51,7 +51,7 @@ instance Pretty Error where
 
     ArgNumConstructor cl cr want giv ->
       "cant build " <> emph (pPrint cl) <> " wiv " <> emph (maybe "noname constructor" pPrint cr) <>
-      " and its sweeeeet bff team ^.^ of " <> emph (int giv) <> " argz. U need " <> emph (int want) <> " argz." 
+      " and its sweeeeet bff team ^.^ of " <> emph (int giv) <> " argz. U need " <> emph (int want) <> " boiz&gurlz."
 
     DuplicateVar i ->
       "why r u doin " <> emph (pPrint i) <> " too much"
@@ -60,11 +60,11 @@ instance Pretty Error where
       "i know " <> emph (pPrint i) <> ". gimme some other boi lol"
 
     DuplicateClass i ->
-      "ok man. i get u looooooooov xoxoxox " <> emph (pPrint i) <> " but 1 is just enough"
+      "ok man. i get u looooooooov xoxoxox kawaii " <> emph (pPrint i) <> " but 1 is just enough"
 
     DuplicateField c i ->
-      "field field bald field, u know like in thiz song. too much " <> emph (pPrint i) <>
-      " in " <> emph (pPrint c) <> " btw"
+      "OMG YOU GIV A FRIEND TO " <> emph (pPrint i) <> " OwO <3 <3 (Y) how sw33t ;D ;D" <>
+      " related claz " <> emph (pPrint c) <> " sooo proud X_X but the lAtTi-cOmPi is a duplicatephobo :c :'c"
 
     DuplicateMethod c i ->
       "MAN WHAT THE F XDXDXDDDD WHY SECOND " <> emph (pPrint i) <> " WTF WHY X'DD " <>
@@ -100,7 +100,7 @@ instance Pretty Error where
       "meffod nott ffund :( " <> emph (pPrint c) <> " misses " <> emph (pPrint i) <> " rip"
 
     UndefinedConstructor c (Just i) ->
-      emph (pPrint i) <> " is not the wey. to get " <> emph (pPrint c) <> " u need smth els"
+      emph (pPrint i) <> " is not de wey. to get " <> emph (pPrint c) <> " u need smth els"
     UndefinedConstructor c Nothing ->
       "no unnamed bois allowd in " <> emph (pPrint c)
 

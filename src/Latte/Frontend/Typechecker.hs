@@ -357,7 +357,7 @@ buildInitialEnv :: [TopDef 'Untyped] -> Except String TypecheckerEnv
 buildInitialEnv defs = do
   when (null [() | TDFun fdef <- defs, fdef^.name == "main"]) $
     raiseErrorNoLoc NoMain
-  foldM (\prev d ->
+  env <- foldM (\prev d ->
            case d of
              TDFun fdef -> do
                when (fdef^.name == "main" && (fdef^.retType /= TInt || not (null $ fdef^.args))) $
@@ -381,6 +381,11 @@ buildInitialEnv defs = do
                checkDups [(c^.ann, c) | CMConstructor c <- cd^.body ] (^.name) (DuplicateConstructor (cd^.name))
                pure $ over classEnv (M.insert (cd^.name) ce) prev
         ) initialEnv defs
+  forM_ [cd | TDClass cd <- defs] $ \cd ->
+    forM_ (cd^.super) $ \sup ->
+      when (not $ M.member sup (env^.classEnv))
+        (raiseErrorAt (cd^.ann) (UndefinedClass sup))
+  return env
 
 
 tcTopDef :: TopDef 'Untyped -> Typechecker (TopDef 'Typed)
