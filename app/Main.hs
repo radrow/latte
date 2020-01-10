@@ -1,7 +1,5 @@
 module Main where
 
-import Control.Monad
-import Control.Exception
 import System.Environment
 import System.Exit
 import System.IO
