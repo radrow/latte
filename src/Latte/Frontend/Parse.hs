@@ -21,7 +21,7 @@ import qualified Latte.Frontend.AST as AST
 type Parser = ParsecT Void Text Identity
 runLatteParser :: Parser a -> FilePath -> Text -> Either String a
 runLatteParser p filename inp = first
-  (concat . fmap parseErrorPretty . bundleErrors)
+  errorBundlePretty
   (parse (skip *> p <* eof) filename inp)
 
 
@@ -56,6 +56,15 @@ keywords =
   ]
 
 
+validId :: Parser String -> Parser String
+validId ps = try $ do
+  s <- ps
+  when (Prelude.take 2 s == "__" || s `elem` keywords) $
+    fail ("invalid id: " ++ s)
+  return s
+{-# INLINE validId #-}
+
+
 skip :: Parser ()
 skip = L.space
   (void spaceChar)
@@ -65,31 +74,38 @@ skip = L.space
 
 lex :: Parser a -> Parser a
 lex = L.lexeme skip
+{-# INLINE lex #-}
 
 
 lId :: Parser String
 lId = lex $ liftA2 (:) lowerChar (many alphaNumChar)
+{-# INLINE lId #-}
 
 
 uId :: Parser String
 uId = lex $ liftA2 (:) upperChar (many alphaNumChar)
+{-# INLINE uId #-}
 
 
 signed :: Parser Integer
 signed = lex $ L.decimal
+{-# INLINE signed #-}
 
 
 operator :: Text -> Parser ()
 operator o =
   lex $ try $ string o *> notFollowedBy (oneOf ("=+-/*%\\&.|^<>" :: String))
+{-# INLINE operator #-}
 
 
 symbol :: Text -> Parser Text
 symbol = L.symbol skip
+{-# INLINE symbol #-}
 
 
 word :: Text -> Parser ()
 word w = lex $ try $ string w >> notFollowedBy alphaNumChar >> skip
+{-# INLINE word #-}
 
 
 paren :: Parser a -> Parser a
@@ -109,28 +125,22 @@ infixL op p x = do
 
 
 varId :: Parser AST.VarId
-varId =  try $ lId >>= \i -> if (i `elem` keywords)
-  then fail $ "Forbidden id: " ++ i else pure (AST.VarId i)
+varId = AST.VarId <$> validId lId
 
 funId :: Parser AST.FunId
-funId =  try $ lId >>= \i -> if (i `elem` keywords)
-  then fail $ "Forbidden id: " ++ i else pure (AST.FunId i)
+funId = AST.FunId <$> validId lId
 
 classId :: Parser AST.ClassId
-classId =  try $ lId >>= \i -> if (i `elem` keywords)
-  then fail $ "Forbidden id: " ++ i else pure (AST.ClassId i)
+classId = AST.ClassId <$> validId lId
 
 fieldId :: Parser AST.FieldId
-fieldId =  try $ lId >>= \i -> if (i `elem` keywords)
-  then fail $ "Forbidden id: " ++ i else pure (AST.FieldId i)
+fieldId =  AST.FieldId <$> validId lId
 
 methodId :: Parser AST.MethodId
-methodId =  try $ lId >>= \i -> if (i `elem` keywords)
-  then fail $ "Forbidden id: " ++ i else pure (AST.MethodId i)
+methodId =  AST.MethodId <$> validId lId
 
 constructorId :: Parser AST.ConstructorId
-constructorId =  try $ lId >>= \i -> if (i `elem` keywords)
-  then fail $ "Forbidden id: " ++ i else pure (AST.ConstructorId i)
+constructorId = AST.ConstructorId <$> validId lId
 
 
 lit :: Parser AST.Lit
@@ -222,10 +232,7 @@ expr6 :: Parser (AST.RawExpr 6)
 expr6 = do
   e <- AST.RECoe <$> expr7
   let proj = choice
-        [ Right <$> do
-            i <- methodId
-            as <- appliedArgs
-            return (i, as)
+        [ Right <$> try (liftA2 (,) methodId appliedArgs)
         , Left <$> fieldId
         ]
       fldOrMth a l r = case r of
