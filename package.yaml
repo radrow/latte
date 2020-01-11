@@ -46,6 +46,7 @@ library:
     - bytestring
     - directory
     - filepath
+    - array
 
 executables:
   lattec:

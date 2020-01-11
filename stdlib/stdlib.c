@@ -43,3 +43,14 @@ void error() {
   printf("runtime error\n");
   exit(1);
 }
+
+void __virtual_method_fail() {
+  fprintf(stderr, "INTERNAL ERROR: virtual method fail\n");
+  exit(-1);
+}
+
+
+void __unreachable() {
+  fprintf(stderr, "INTERNAL ERROR: unreachable code\n");
+  exit(-1);
+}
