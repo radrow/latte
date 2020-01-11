@@ -138,11 +138,11 @@ labelFromId i = Label $ i^.AST.idStr
 
 makeConstructorName :: Int -> Maybe AST.ConstructorId -> String
 makeConstructorName cid = \case
-  Nothing -> "cstr_" ++ show cid ++ "_unnamed_"
-  Just n -> "cstr_" ++ show cid ++ "_" ++ n^.AST.idStr
+  Nothing -> "__cstr_" ++ show cid ++ "_unnamed_"
+  Just n -> "__cstr_" ++ show cid ++ "_" ++ n^.AST.idStr
 
 makeMethodName :: Int -> AST.MethodId -> String
-makeMethodName ci mth = "mth_" ++ show ci ++ "_" ++ mth^.AST.idStr
+makeMethodName ci mth = "__mth_" ++ show ci ++ "_" ++ mth^.AST.idStr
 
 newSup :: Compiler Int
 newSup = do
@@ -171,9 +171,6 @@ localScope k = do
   r <- local (set defaultRet Nothing) k
   modify (set varMap (s^.varMap) . set typeMap (s^.typeMap))
   return r
-
-constrName :: AST.ClassId -> Maybe AST.ConstructorId -> String
-constrName c mco = "cstr_" ++ c^.AST.idStr ++ "_" ++ maybe "" (^.AST.idStr) mco
 
 makeLabel :: String -> Compiler Label
 makeLabel s = do
@@ -216,7 +213,7 @@ mapConts f l k =
   in build [] l
 
 cExpr :: AST.Expr 'AST.Typed -> (Const -> Compiler a) -> Compiler a
-cExpr e k = case e of
+cExpr ex k = case ex of
   AST.ELit _ _ l -> cLit l >>= k
   AST.EVar _ _ v -> CVar <$> loadVar v >>= k
   AST.EOp _ AST.TBool (AST.Op (AST.And _)) l r -> do
@@ -300,8 +297,10 @@ cExpr e k = case e of
     tt <- liftTop $ cType t
     alloc <- newVar tt
     construct <- newVar tt
+    cid <- liftTop $ views classIds (M.! c)
+    let labelName = makeConstructorName cid n
     write [ Assg tt alloc NewObj
-          , Assg tt construct (Call (constrName c n) (CVar alloc:asRefs))
+          , Assg tt construct (Call labelName (CVar alloc:asRefs))
           ]
     k $ CVar construct
 
@@ -472,7 +471,7 @@ cConstructor cl ctr = do
                              }
                      : ctr^.AST.args
   argTypes <- mapM cType (argsWithThis <&> (^.AST.ty))
-  classId <- views classIds (M.! cl) 
+  classId <- views classIds (M.! cl)
   let argIds = map (VarId . negate) [1..length argsWithThis]
       initVarMap = M.fromList $ zip (argsWithThis <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
