@@ -4,10 +4,14 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Latte.Backend.X86.Compile where
 
+import Control.Monad.ST
+import Data.Array.ST
+import Data.Array
 import Data.Char
+import Data.List hiding (or, and)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Lens
@@ -157,6 +161,9 @@ sizeOf = \case
 makeMethodDispatcherName :: String -> String
 makeMethodDispatcherName s = "__" ++ s ++ "_dispatch"
 
+makeMethodVTableName :: String -> String
+makeMethodVTableName s = "__" ++ s ++ "_vtable"
+
 cExpr :: IR.Type -> Operand -> IR.Expr -> Compiler ()
 cExpr t vloc e = case e of
   IR.Const c ->
@@ -218,9 +225,9 @@ cInstr i = comment (pp i) >> case i of
   IR.FieldAssg t b f e -> do
     cConst b ecx
     push ecx
-    mov (OConst $ fromIntegral f) edx
     cExpr t eax e
     pop ecx
+    mov (OConst $ fromIntegral f) edx
     mov eax (mem (0 :: Int) (ECX, EDX, 4 :: Int))
 
 cFinInstr :: IR.FinInstr -> Compiler ()
@@ -245,7 +252,7 @@ cFinInstr i = comment (pp i) >> case i of
       cmp ecx eax
       cROpJmp o ltrue lfalse
   IR.Unreachable ->
-    call (OLabel "error")
+    call (OLabel "__unreachable")
 
 cBlock :: IR.Block -> Compiler ()
 cBlock (IR.Block (IR.Label bname) instrs fin) = do
@@ -275,27 +282,39 @@ cRoutine (IR.Routine (IR.Label rname) args blocks) = do
     sub (OConst $ fromIntegral $ length locals * 4) esp
     forM_ blocks cBlock
 
-cMethodDispatcher :: AST.MethodId -> M.Map String [Int] -> Compiler ()
-cMethodDispatcher m implMap = do
-  label (makeMethodDispatcherName $ m^.AST.idStr)
-  push ebp
-  mov esp ebp
-  mov (mem (8 :: Int) EBP :: Operand) eax
-  mov (mem EAX) eax
-  forM_ (M.toList implMap) $ \(impl, cids) ->
-    void $ mfix $ \l -> do
-      void $ mfix $ \lf -> do
-        forM_ cids $ \cid -> do
-          mov (OConst $ fromIntegral cid) ecx
-          cmp eax ecx
-          je $ OLabel lf
-        jmp $ OLabel l
-        makeLabel "dispatch_found_"
-      call (OLabel impl)
-      leave
-      ret
-      makeLabel "dispatch_step_"
-  call (OLabel "error")
+
+cVirtualMethodTables :: IR.MethodMap -> Compiler ()
+cVirtualMethodTables methodMap = do
+  let size = maximum $ [c | (_, implMap) <- methodMap, cls <- M.elems implMap, c <- cls]
+  forM_ methodMap $ \(mname, implMap) -> do
+    let vtableName = makeMethodVTableName $ mname^.AST.idStr
+        dispatcherName = makeMethodDispatcherName $ mname^.AST.idStr
+        table :: [String]
+        table = runST $ do
+          a <- newArray (0, size) "__virtual_method_fail" :: ST s (STArray s Int String)
+          forM_ (M.toList implMap) $ \(impl, ids) -> do
+            forM_ ids $ \i -> do
+              writeArray a (i :: Int) impl
+          af <- freeze a
+          return (elems af)
+    label vtableName
+    forM_ table $ \e -> do
+      long e
+    label dispatcherName
+
+    push ebp
+    mov esp ebp
+
+    mov (mem (8 :: Int) ESP) ecx
+    mov (mem ECX) ecx
+
+    lea (OLabel vtableName) edx
+    mov (mem (EDX, ECX, 4 :: Int)) edx
+
+    call edx
+    leave
+    ret
+
 
 compileStrings :: M.Map String String -> Compiler ()
 compileStrings strs = forM_ (M.toList strs) $ \(s, v) -> do
@@ -314,5 +333,5 @@ compile :: IR.MethodMap -> IR.IR -> Assembly
 compile mm ir = optimize $
   let act = do
         cProgram ir
-        mapM (uncurry cMethodDispatcher) mm
+        cVirtualMethodTables mm
   in Assembly $ snd $ evalRWS act undefined (St 1 M.empty)

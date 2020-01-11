@@ -35,10 +35,6 @@ movs = \case
   Mov a a' : rest
     | a == a' -> movs rest
 
-  -- mov and overwrite immediately
-  Mov _ b : Mov c b' : rest
-    | b == b' && c /= b' -> movs (Mov c b' : rest)
-
   -- mov from a to b and from b to c where a is in a reg
   Mov a b : Mov b' c : rest
     | b == b' && isReg a && P.not (isReg b) -> movs (Mov a b : Mov a c : rest)

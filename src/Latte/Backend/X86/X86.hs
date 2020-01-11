@@ -43,6 +43,9 @@ class IsInteger a where
 instance Prelude.Num a => IsInteger a where
   fromInteger = Prelude.fromInteger
 
+instance IsString Operand where
+  fromString = OLabel
+
 data Instr where
   Ann :: String -> [String] -> Instr
   Comment :: String -> Instr
@@ -50,6 +53,7 @@ data Instr where
   Push :: Operand -> Instr
   Pop :: Operand -> Instr
   Mov :: Operand -> Operand -> Instr
+  Lea :: Operand -> Operand -> Instr
   Cdq :: Instr
 
   Add :: Operand -> Operand -> Instr
@@ -154,6 +158,9 @@ pop o = tell [Pop o]
 
 mov :: MonadWriter [Instr] m => Operand -> Operand -> m ()
 mov l r = tell [Mov l r]
+
+lea :: MonadWriter [Instr] m => Operand -> Operand -> m ()
+lea l r = tell [Lea l r]
 
 cdq :: MonadWriter [Instr] m => m ()
 cdq = tell [Cdq]
@@ -345,6 +352,7 @@ instance Pretty Instr where
     Push a -> "pushl" <+> pPrint a
     Pop a -> "popl" <+> pPrint a
     Mov a b -> "movl" <+> pPrint a <> comma <+> pPrint b
+    Lea a b -> "lea" <+> pPrint a <> comma <+> pPrint b
     Cdq -> "cdq"
 
     Add a b -> "add" <+> pPrint a <> comma <+> pPrint b
@@ -359,13 +367,21 @@ instance Pretty Instr where
     Cmp a b -> "cmp" <+> pPrint a <> comma <+> pPrint b
     Test a b -> "test" <+> pPrint a <> comma <+> pPrint b
 
-    Jmp a -> "jmp" <+> pPrint a
-    Je a -> "je" <+> pPrint a
-    Jne a -> "jne" <+> pPrint a
-    Jg a -> "jg" <+> pPrint a
-    Jge a -> "jge" <+> pPrint a
-    Jl a -> "jl" <+> pPrint a
-    Jle a -> "jle" <+> pPrint a
+    Jmp a@(OLabel _) -> "jmp" <+> pPrint a
+    Je a@(OLabel _) -> "je" <+> pPrint a
+    Jne a@(OLabel _) -> "jne" <+> pPrint a
+    Jg a@(OLabel _) -> "jg" <+> pPrint a
+    Jge a@(OLabel _) -> "jge" <+> pPrint a
+    Jl a@(OLabel _) -> "jl" <+> pPrint a
+    Jle a@(OLabel _) -> "jle" <+> pPrint a
+
+    Jmp a -> "jmp" <+> "*" <> pPrint a
+    Je a -> "je" <+> "*" <>  pPrint a
+    Jne a -> "jne" <+> "*" <>  pPrint a
+    Jg a -> "jg" <+> "*" <>  pPrint a
+    Jge a -> "jge" <+> "*" <>  pPrint a
+    Jl a -> "jl" <+> "*" <>  pPrint a
+    Jle a -> "jle" <+> "*" <>  pPrint a
 
     Sete a -> "sete" <+> pPrint a
     Setne a -> "setne" <+> pPrint a
@@ -376,7 +392,8 @@ instance Pretty Instr where
     Setz a -> "setz" <+> pPrint a
     Setnz a -> "setnz" <+> pPrint a
 
-    Call a -> "call" <+> pPrint a
+    Call a@(OLabel _) -> "call" <+> pPrint a
+    Call a -> "call" <+> "*" <> pPrint a
     Leave -> "leave"
     Ret -> "ret"
 
