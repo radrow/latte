@@ -371,7 +371,7 @@ instance Pretty Type where
   pPrint = \case
     TVoid -> "void"
     TInt -> "int"
-    TBool -> "bool"
+    TBool -> "boolean"
     TString -> "string"
     TClass i -> pPrint i
 

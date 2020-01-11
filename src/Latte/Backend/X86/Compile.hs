@@ -236,7 +236,7 @@ cFinInstr i = comment (pp i) >> case i of
   IR.Br c (IR.Label ltrue) (IR.Label lfalse) -> case c of
     IR.CondConst cc -> do
       cConst cc eax
-      test eax eax
+      cmp (OConst 0) eax
       jne $ OLabel ltrue
       jmp $ OLabel lfalse
     IR.Cond o l r -> do

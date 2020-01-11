@@ -25,7 +25,6 @@ import Control.Monad.Reader
 import Control.Lens
 
 import Prelude hiding (LT, GT, EQ, (<>))
-import qualified Prelude as P
 
 
 newtype ErrorPack = ErrorPack (NE.NonEmpty (Maybe Ann, Error))
@@ -154,13 +153,13 @@ tcConstructor c m = do
     Just ts -> pure ts
 
 matchTypes :: Type -> Type -> Typechecker ()
-matchTypes a b = case (a, b) of
+matchTypes want got = case (want, got) of
   (TInt, TInt) -> pure ()
   (TVoid, TVoid) -> pure ()
   (TBool, TBool) -> pure ()
   (TString, TString) -> pure ()
   (TClass o1, TClass o2) -> matchClass o1 o2
-  _ -> raiseError $ TypeMatch a b
+  _ -> raiseError $ TypeMatch want got
 
 
 matchClass :: ClassId -> ClassId -> Typechecker ()
@@ -177,6 +176,12 @@ matchClass c1 c2 =
 assertType :: Type -> Expr 'Typed -> Typechecker ()
 assertType t e = matchTypes t (getExprDec e)
 
+tcType :: Type -> Typechecker ()
+tcType = \case
+  TClass cls -> do
+    isDefined <- views classEnv (M.member cls)
+    when (not isDefined) $ raiseError $ UndefinedClass cls
+  _ -> return ()
 
 tcOp :: AnyOp -> Type -> Type -> Typechecker Type
 tcOp o l r =
@@ -270,6 +275,7 @@ newScope = local (set currentScopeVars S.empty)
 tcStmt :: Stmt 'Untyped -> Typechecker (Stmt 'Typed)
 tcStmt = \case
   SDecl a t v k -> withAnn a $ do
+    tcType t
     vars <- view currentScopeVars
     when (S.member v vars) (raiseError $ DuplicateVar v)
     local (over definedVars (M.insert v t) . over currentScopeVars (S.insert v)) $
@@ -408,6 +414,8 @@ buildInitialEnv defs = do
 tcTopDef :: TopDef 'Untyped -> Typechecker (TopDef 'Typed)
 tcTopDef = \case
   TDFun fdef -> do
+    tcType (fdef^.retType)
+    forM_ (fmap (^.ty) $ fdef^.args) tcType
     let addArgEnv =
           flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (fdef^.args))
     when (not $ (fdef^.retType == TVoid) || isReturning (fdef^.body)) $
@@ -419,6 +427,8 @@ tcTopDef = \case
     let tcMember :: ClassMember 'Untyped -> Typechecker (ClassMember 'Typed)
         tcMember = \case
           CMMethod mdef -> do
+            tcType $ mdef^.retType
+            forM_ (fmap (^.ty) $ mdef^.args) tcType
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (mdef^.args))
             when (maybe False (\b -> not $ (mdef^.retType == TVoid) || isReturning b) (mdef^.body)) $
@@ -440,6 +450,7 @@ tcTopDef = \case
               , _methodBody = tbody
               }
           CMField fdef -> do
+            tcType $ fdef^.ty
             tassgs <- forM (fdef^.assignments) $ \(i, mv) -> do
               case mv of
                 Nothing -> return (i, Nothing)
@@ -456,6 +467,7 @@ tcTopDef = \case
               , _fieldAssignments = tassgs
               }
           CMConstructor codef -> do
+            forM_ (fmap (^.ty) $ codef^.args) tcType
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (codef^.args))
             when (not $ isReturning (codef^.body)) $ raiseErrorAt (codef^.ann) NoReturn

@@ -209,13 +209,49 @@ cType t = case t of
     fs <- processFields c
     return $ TObj i fs
 
-cExpr :: AST.Expr 'AST.Typed -> Compiler Const
-cExpr = \case
-  AST.ELit _ _ l -> cLit l
-  AST.EVar _ _ v -> CVar <$> loadVar v
-  AST.EOp _ te o l r -> do
-    lv <- cExpr l
-    rv <- cExpr r
+mapConts :: (a -> (b -> Compiler d) -> Compiler d) -> [a] -> ([b] -> Compiler d) -> Compiler d
+mapConts f l k =
+  let build acc (h:t) = f h (\x -> build (x:acc) t)
+      build acc [] = k (reverse acc)
+  in build [] l
+
+cExpr :: AST.Expr 'AST.Typed -> (Const -> Compiler a) -> Compiler a
+cExpr e k = case e of
+  AST.ELit _ _ l -> cLit l >>= k
+  AST.EVar _ _ v -> CVar <$> loadVar v >>= k
+  AST.EOp _ AST.TBool (AST.Op (AST.And _)) l r -> do
+    tryR <- makeLabel "bool_and_right"
+    setF <- makeLabel "bool_and_f"
+    cont <- makeLabel "bool_and_cont"
+    t <- liftTop $ cType AST.TBool
+    v <- newVar t
+    cExpr l $ \lv -> do
+      cutBlock (Br (CondConst lv) tryR setF)
+      newBlock tryR $ do
+        cExpr r $ \rv -> do
+          write [Assg t v (Const rv)]
+          cutBlock (Jmp cont)
+      newBlock setF $ do
+        write [Assg t v (Const $ CInt 0)]
+        cutBlock (Jmp cont)
+      newBlock cont $ k (CVar v)
+  AST.EOp _ AST.TBool (AST.Op (AST.Or _)) l r -> do
+    tryR <- makeLabel "bool_or_right"
+    setT <- makeLabel "bool_or_t"
+    cont <- makeLabel "bool_or_cont"
+    t <- liftTop $ cType AST.TBool
+    v <- newVar t
+    cExpr l $ \lv -> do
+      cutBlock (Br (CondConst lv) setT tryR)
+      newBlock tryR $ do
+        cExpr r $ \rv -> do
+          write [Assg t v (Const rv)]
+          cutBlock (Jmp cont)
+      newBlock setT $ do
+        write [Assg t v (Const $ CInt 1)]
+        cutBlock (Jmp cont)
+      newBlock cont $ k (CVar v)
+  AST.EOp _ te o l r -> cExpr l $ \lv -> cExpr r $ \rv -> do
     t <- liftTop $ cType te
     v <- newVar t
     write $ case o of
@@ -234,55 +270,46 @@ cExpr = \case
       AST.Op (AST.NEQ _)   -> [Assg t v (RelOp Neq lv rv)]
       AST.Op (AST.GEQ _)   -> [Assg t v (RelOp Ge lv rv)]
       AST.Op (AST.GT _)    -> [Assg t v (RelOp Gt lv rv)]
-    return $ CVar v
-  AST.EUnOp _ te o e -> do
-    ee <- cExpr e
+    k $ CVar v
+  AST.EUnOp _ te o e -> cExpr e $ \ee -> do
     let uo = case o of
           AST.Not -> Not
           AST.Neg -> Neg
     t <- liftTop $ cType te
     v <- newVar t
     write [Assg t v (UnOp uo ee)]
-    return $ CVar v
-  AST.EApp _ rt f as -> do
-    asRefs <- mapM cExpr as
+    k $ CVar v
+  AST.EApp _ rt f as -> mapConts cExpr as $ \asRefs -> do
     t <- liftTop $ cType rt
     v <- newVar t
     write $ [Assg t v (Call (f^.AST.idStr) asRefs)]
-    return $ CVar v
-  AST.EProj _ t e fld -> do
-    ce <- cExpr e
+    k $ CVar v
+  AST.EProj _ t e fld -> cExpr e $ \ce -> do
     tt <- liftTop $ cType t
     v <- newVar tt
     let (AST.TClass c) = AST.getExprDec e
     offset <- liftTop $ views fieldEnv (M.! (c,fld))
     write [Assg tt v (Proj ce offset)]
-    return $ CVar v
-  AST.EMApp _ rt e m as -> do
-    ce <- cExpr e
-    asRefs <- mapM cExpr as
+    k $ CVar v
+  AST.EMApp _ rt e m as -> cExpr e $ \ce -> mapConts cExpr as $ \asRefs -> do
     t <- liftTop $ cType rt
     v <- newVar t
     write $ [Assg t v (VCall (m^.AST.idStr) (ce:asRefs))]
-    return $ CVar v
-  AST.ENew _ t c n as -> do
-    asRefs <- mapM cExpr as
+    k $ CVar v
+  AST.ENew _ t c n as -> mapConts cExpr as $ \asRefs -> do
     tt <- liftTop $ cType t
     alloc <- newVar tt
     construct <- newVar tt
     write [ Assg tt alloc NewObj
           , Assg tt construct (Call (constrName c n) (CVar alloc:asRefs))
           ]
-    return $ CVar construct
+    k $ CVar construct
 
 cCondJump :: AST.Expr 'AST.Typed -> Label -> Label -> Compiler ()
 cCondJump e ltrue lfalse =
-  let relCond o l r = do
-        lv <- cExpr l
-        rv <- cExpr r
+  let relCond o l r = cExpr l $ \lv -> cExpr r $ \rv -> do
         cutBlock (Br (Cond o lv rv) ltrue lfalse)
-      naiveCond = do
-        ve <- cExpr e
+      naiveCond = cExpr e $ \ve -> do
         cutBlock (Br (CondConst ve) ltrue lfalse)
   in case e of
     AST.EOp _ _ o l r -> case o of
@@ -321,15 +348,12 @@ newBlockCont i c = local (set nextBlock $ Just c) . newBlock i
 
 cStmt :: AST.Stmt 'AST.Typed -> Compiler ()
 cStmt = \case
-  AST.SAssg _ v e k -> do
-    ve <- cExpr e
+  AST.SAssg _ v e k -> cExpr e $ \ve -> do
     t <- liftTop $ cType (AST.getExprDec e)
     vv <- loadVar v
     write [Assg t vv (Const ve)]
     cStmt k
-  AST.SFieldAssg _ b f e k -> do
-    vb <- cExpr b
-    ve <- cExpr e
+  AST.SFieldAssg _ b f e k -> cExpr b $ \vb -> cExpr e $ \ve -> do
     t <- liftTop $ cType (AST.getExprDec e)
     let (AST.TClass c) = AST.getExprDec b
     offset <- liftTop $ views fieldEnv (M.! (c, f))
@@ -356,8 +380,7 @@ cStmt = \case
     cStmt k
   AST.SVRet _ _ -> do
     cutBlock (Ret Nothing)
-  AST.SRet _ e _ -> do
-    ve <- cExpr e
+  AST.SRet _ e _ -> cExpr e $ \ve ->
     cutBlock (Ret (Just ve))
   AST.SCond _ e b k -> do
     cl <- makeLabel "if_cont"
@@ -382,12 +405,10 @@ cStmt = \case
       cCondJump e bl cl
     newBlockCont bl cdl (localScope $ cStmt b)
     newBlock cl (cStmt k)
-  AST.SExp _ e@(AST.EApp _ _ "error" _) _ -> do
-    void $ cExpr e
-    cutBlock Unreachable
+  AST.SExp _ e@(AST.EApp _ _ "error" _) _ ->
+    cExpr e $ \_ -> cutBlock Unreachable
   AST.SExp _ e k -> do
-    void $ cExpr e
-    cStmt k
+    cExpr e $ \_ -> cStmt k
   AST.SBlock _ b k -> do
     bl <- makeLabel "block"
     cl <- makeLabel "block"
