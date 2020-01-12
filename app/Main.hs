@@ -19,6 +19,7 @@ main = do
       contents <- T.readFile file
       case buildX86 file contents of
         Right s -> do
+          hPutStrLn stderr "OK"
           let asmName = file -<.> "s"
               binName = dropExtension file
           std <- putStdLib
