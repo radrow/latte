@@ -15,15 +15,13 @@ import Prelude hiding (LT, GT, EQ)
 
 type ValMap = M.Map VarId Lit
 
-data Stop = WillCrash (Expr 'Typed) | EarlyReturn (Stmt 'Typed)
-
 data St = St
   { _stValMap :: ValMap
-  , _stStmtBuild :: Stmt 'Typed -> Stmt 'Typed
+  , _stEarlyStop :: Bool
   }
 makeLensesWith abbreviatedFields ''St
 
-type Optimizer = ExceptT Stop (State St)
+type Optimizer = State St
 
 pattern LI :: Integer -> Expr 'Typed
 pattern LI i <- ELit _ _ (LInt i)
@@ -45,20 +43,14 @@ litI a t i = return $ ELit a t $ LInt i
 litB :: Ann -> Type -> Bool -> Optimizer (Expr 'Typed)
 litB a t i = return $ ELit a t $ LBool i
 
-deferStop :: (a -> Optimizer a) -> a -> Optimizer (Maybe Stop, a)
-deferStop opt ob =
-  catchError (opt ob >>= \o -> return (Nothing, o)) $ \er -> return (Just er, ob)
-
-destroyStop :: Maybe Stop -> Optimizer ()
-destroyStop = \case
-  Nothing -> return ()
-  Just e -> throwError e
+stop :: a -> Optimizer a
+stop a = modify (set earlyStop True) >> pure a
 
 oExpr :: Expr 'Typed -> Optimizer (Expr 'Typed)
 oExpr ex = case ex of
   ELit _ _ _ -> return ex
   EVar a t v -> maybe ex (ELit a t) <$> getVar v
-  EApp _ _ fname as | fname == "error" -> throwError $ WillCrash ex
+  EApp _ _ fname as | fname == "error" -> stop ex
   EApp _ _ fname as -> return ex
   EUnOp a t o e -> do
     v <- oExpr e
@@ -67,8 +59,8 @@ oExpr ex = case ex of
       (Not, LB b) -> litB a t (not b)
       _ -> return ex
   EOp a t (Op o) l r -> do
-    (cl, ll) <- deferStop oExpr l
-    (cr, rr) <- deferStop oExpr r
+    ll <- oExpr l
+    rr <- oExpr r
     case (ll, rr, o) of
       (LI il, LI ir, _) -> case o of
         LT _    -> litB a t (il < ir)
@@ -81,37 +73,37 @@ oExpr ex = case ex of
         Minus _ -> litI a t (il - ir)
         Mult _  -> litI a t (il * ir)
         Div _   -> case ir of
-          0 -> throwError (WillCrash ex)
+          0 -> stop ex
           _ -> litI a t (il `div` ir)
         Mod _   -> litI a t (il `mod` ir)
         _ -> return ex
 
-      (LI 0, rv, Plus _) -> destroyStop cr >> return rv
-      (lv, LI 0, Plus _) -> destroyStop cl >> return lv
+      (LI 0, rv, Plus _) -> return rv
+      (lv, LI 0, Plus _) -> return lv
 
-      (LI 0, _, Minus _) -> destroyStop cr >> return (EUnOp a t Neg r)
-      (lv, LI 0, Minus _) -> destroyStop cl >> return lv
+      (LI 0, _, Minus _) -> return (EUnOp a t Neg r)
+      (lv, LI 0, Minus _) -> return lv
 
       (LI 0, _, Mult _) -> litI a t 0
       (_, LI 0, Mult _) -> litI a t 0
 
       (LI 0, _, Div _) -> litI a t 0
-      (_, LI 0, Div _) -> throwError (WillCrash ex)
+      (_, LI 0, Div _) -> stop ex
 
-      (LI 1, rv, Mult _) -> destroyStop cr >> return rv
-      (lv, LI 1, Mult _) -> destroyStop cl >> return lv
+      (LI 1, rv, Mult _) -> return rv
+      (lv, LI 1, Mult _) -> return lv
 
-      (LI 1, rv, Div _) -> destroyStop cr >> return rv
-      (lv, LI 1, Div _) -> destroyStop cl >> return lv
+      (LI 1, rv, Div _) -> return rv
+      (lv, LI 1, Div _) -> return lv
 
-      (LB True, rv, And _) -> destroyStop cr >> return rv
-      (lv, LB True, And _) -> destroyStop cl >> return lv
+      (LB True, rv, And _) -> return rv
+      (lv, LB True, And _) -> return lv
 
       (LB False, _, And _) -> litB a t False
       (_, LB False, And _) -> litB a t False
 
-      (LB False, rv, Or _) -> destroyStop cr >> return rv
-      (lv, LB False, Or _) -> destroyStop cl >> return lv
+      (LB False, rv, Or _) -> return rv
+      (lv, LB False, Or _) -> return lv
 
       (LB True, _, Or _) -> litB a t True
       (_, LB True, Or _) -> litB a t True
@@ -119,26 +111,18 @@ oExpr ex = case ex of
   _ -> return ex
 
 
-oStmtScoped :: Bool -> Stmt 'Typed -> Optimizer (Stmt 'Typed)
-oStmtScoped surelyEval ob = do
-  backup <- use stmtBuild
-  modify $ set stmtBuild id
-  res <- catchError (oStmt ob) $ \e -> if surelyEval then throwError e else
-    case e of
-      WillCrash _ -> return ob
-      EarlyReturn r -> return r
-  modify $ set stmtBuild backup
+oStmtScoped :: Stmt 'Typed -> Optimizer (Stmt 'Typed)
+oStmtScoped ob = do
+  backup <- use earlyStop
+  modify $ set earlyStop False
+  res <- oStmt ob
+  modify $ set earlyStop backup
   return res
 
 continue :: (Stmt 'Typed -> Stmt 'Typed) -> Stmt 'Typed -> Optimizer (Stmt 'Typed)
 continue b k = do
-  modify (over stmtBuild (.b))
-  b <$> oStmt k
-
-earlyRet :: (Stmt 'Typed -> Stmt 'Typed) -> Optimizer (Stmt 'Typed)
-earlyRet b = do
-  build <- use stmtBuild
-  throwError (EarlyReturn $ build . b $ (SEmpty fakeAnn))
+  break <- use earlyStop
+  if break then return (b (SEmpty fakeAnn)) else b <$> oStmt k
 
 oStmt :: Stmt 'Typed -> Optimizer (Stmt 'Typed)
 oStmt s = case s of
@@ -169,7 +153,7 @@ oStmt s = case s of
       LB False ->
         oStmt k
       _ -> do
-        ot <- oStmtScoped False t
+        ot <- oStmtScoped t
         continue (SCond a oc ot) k
   SCondElse a c t e k -> do
     oc <- oExpr c
@@ -179,18 +163,18 @@ oStmt s = case s of
       LB False ->
         oStmt $ SBlock a e k
       _ -> do
-        ot <- oStmtScoped False t
-        oe <- oStmtScoped False e
+        ot <- oStmtScoped t
+        oe <- oStmtScoped e
         continue (SCondElse a oc ot oe) k
   SWhile a c b k -> do
     oc <- oExpr c
     case oc of
       LB True ->
-        earlyRet (SWhile a c b)
+        stop (SWhile a c b (SEmpty fakeAnn))
       LB False ->
         oStmt k
       _ -> do
-        ob <- oStmtScoped False b
+        ob <- oStmtScoped b
         continue (SWhile a oc ob) k
   SExp a e k -> do
     oe <- oExpr e
@@ -202,21 +186,14 @@ oStmt s = case s of
       _ -> oStmt k
   SRet a e _ -> do
     oe <- oExpr e
-    earlyRet $ SRet a oe
-  SVRet a _ -> earlyRet $ SVRet a
+    stop $ (SRet a oe (SEmpty fakeAnn))
+  SVRet a _ -> stop $ SVRet a (SEmpty fakeAnn)
   SBlock a (SBlock _ b (SEmpty _)) k -> oStmt (SBlock a b k)
   SBlock _ (SEmpty _) k -> oStmt k
   SBlock a b k -> do
-    ob <- catchError (oStmtScoped True b) $ \e -> case e of
-      EarlyReturn r -> earlyRet (SBlock a r)
-      _ -> throwError e
+    ob <- oStmt b
     continue (SBlock a ob) k
   SEmpty a -> pure $ SEmpty a
 
 optimizeBody :: Stmt 'Typed -> Stmt 'Typed
-optimizeBody s = case evalState (runExceptT (oStmtScoped True s))
-                      (St M.empty id) of
-  Right os -> os
-  Left er -> case er of
-    WillCrash _ -> SExp fakeAnn (EApp fakeAnn TVoid "error" []) (SEmpty fakeAnn)
-    EarlyReturn os -> os
+optimizeBody s = evalState (oStmt s) (St M.empty False)
