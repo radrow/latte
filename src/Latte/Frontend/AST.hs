@@ -5,6 +5,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -14,6 +16,7 @@ import Data.String
 import Data.List.NonEmpty(NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import GHC.TypeNats(Nat, type (+))
+import Control.Lens.Extras
 import Control.Lens
 
 import Latte.Pretty
@@ -38,10 +41,10 @@ data Ann = Ann
   { _annFile :: FilePath
   , _annLine :: Int
   , _annColumn :: Int
-  }
+  } deriving (Eq)
 
 fakeAnn :: Ann
-fakeAnn = Ann "no_file" 0 0
+fakeAnn = Ann "" 0 0
 
 
 data Type
@@ -75,6 +78,8 @@ data Op (t :: OpType) where
   Mod   :: Ann -> Op 'Mul
   Or    :: Ann -> Op 'Log
   And   :: Ann -> Op 'Log
+deriving instance Eq (Op t)
+makePrisms ''Op
 
 instance Pretty (Op t) where
   pPrint = \case
@@ -94,6 +99,23 @@ instance Pretty (Op t) where
 
 data AnyOp where
   Op :: Op t -> AnyOp
+instance Eq AnyOp where
+  (Op o1) == (Op o2) = case (o1, o2) of
+    (LT _, LT _) -> True
+    (LEQ _, LEQ _) -> True
+    (EQ _, EQ _) -> True
+    (NEQ _, NEQ _) -> True
+    (GEQ _, GEQ _) -> True
+    (GT _, GT _) -> True
+    (Plus _, Plus _) -> True
+    (Minus _, Minus _) -> True
+    (Mult _, Mult _) -> True
+    (Div _, Div _) -> True
+    (Mod _, Mod _) -> True
+    (Or _, Or _) -> True
+    (And _, And _) -> True
+    _ -> False
+
 
 instance Pretty AnyOp where
   pPrint (Op o) = pPrint o

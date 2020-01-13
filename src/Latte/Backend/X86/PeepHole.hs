@@ -8,7 +8,7 @@ import Prelude as P
 optimize :: Assembly -> Assembly
 optimize (Assembly is) =
   Assembly
-  $ jumps . movs . arith
+  $ arith . movs . jumps
   $ is
 
 jumps :: [Instr] -> [Instr]

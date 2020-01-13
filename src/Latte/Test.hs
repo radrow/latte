@@ -29,6 +29,12 @@ testAST s =
     Left e -> putStrLn e
     Right (_, p) -> putStrLn $ pp p
 
+testUAST :: String -> IO ()
+testUAST s =
+  case runLatteParser program "test" (pack s) of
+    Left e -> putStrLn e
+    Right p -> putStrLn $ pp p
+
 e0 :: String
 e0 = "int f(int x) { if (true) {return 2 + 2;} return 1;}"
 
@@ -54,4 +60,29 @@ eStruct2 = unlines
   , "int len(line l) { int dx = l.p1.x - l.p2.x, dy = l.p1.y - l.p2.y; return dx*dx+dy*dy; }"
   , "int main() { point p1, p2; p1.x = 1; p1.y = 1; p2.x = 2; p2.y = 11; line l;"
   , "l.p1 = p1; l.p2 = p2; printInt(len(l)); return 1; }"
+  ]
+
+eOptim :: String
+eOptim = unlines
+  [ "int main() {"
+
+  -- , "int zero = fi() * 0;"
+  -- , "boolean fals = false || false;"
+  -- , "if(2==2 || fb()) { if(fb()) { return 1; }; }"
+  , " { int x; int y; return 1; }"
+  -- , "if(fb() && zero==0) { return 2; }"
+  -- , "if(2==2 && fals) { return 2137; } else { int x = 3;}"
+  -- , "while(12 * 2 > 4 - 10 && fb()) { return 4; }"
+  -- , "if(fi() == 0) { error(); }"
+  -- , "{"
+  -- , "while(true) {"
+  -- , " int x = 2;"
+  -- , "}"
+  -- , "return 2137;"
+  -- , "}"
+  , "return 2137;"
+
+  , "}"
+  ,"boolean fb() { int x = 2; error(); return true; }"
+  ,"int fi() { int x = 2; return x/0; }"
   ]

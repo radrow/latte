@@ -251,6 +251,12 @@ cFinInstr i = comment (pp i) >> case i of
       cConst r ecx
       cmp ecx eax
       cROpJmp o ltrue lfalse
+  IR.TailCall f as -> do
+    forM_ (reverse $ zip [8,12..] as) $ \(idx, a) -> do
+      cConst a eax
+      mov eax (mem (idx :: Int) EBP)
+    jmp (OLabel $ f ++ "_init")
+  IR.TailVCall _f _as -> error "Tail virtual calls not supported"
   IR.Unreachable ->
     call (OLabel "__unreachable")
 

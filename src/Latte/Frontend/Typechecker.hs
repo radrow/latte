@@ -12,6 +12,7 @@ module Latte.Frontend.Typechecker where
 import Latte.Frontend.AST
 import Latte.Frontend.Error
 import Latte.Pretty
+import Latte.Frontend.ConstantOptimizer
 
 import Data.Functor
 import qualified Data.Map as M
@@ -418,10 +419,12 @@ tcTopDef = \case
     forM_ (fmap (^.ty) $ fdef^.args) tcType
     let addArgEnv =
           flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (fdef^.args))
-    when (not $ (fdef^.retType == TVoid) || isReturning (fdef^.body)) $
-      raiseErrorAt (fdef^.ann) NoReturn
     let bodyEnv = (over definedVars addArgEnv . set retType (Just $ fdef^.retType))
-    tbody <- local bodyEnv (tcStmt $ fdef^.body)
+    tbody <- do
+      tb <- local bodyEnv (tcStmt $ fdef^.body)
+      when (not $ (fdef^.retType == TVoid) || (fdef^.name=="main") || isReturning tb) $
+        raiseErrorAt (fdef^.ann) NoReturn
+      return (optimizeBody tb)
     pure $ TDFun $ FunDef (fdef^.ann) (fdef^.retType) (fdef^.name) (fdef^.args) tbody
   TDClass cdef -> do
     let tcMember :: ClassMember 'Untyped -> Typechecker (ClassMember 'Typed)
@@ -431,15 +434,17 @@ tcTopDef = \case
             forM_ (fmap (^.ty) $ mdef^.args) tcType
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (mdef^.args))
-            when (maybe False (\b -> not $ (mdef^.retType == TVoid) || isReturning b) (mdef^.body)) $
-              raiseErrorAt (mdef^.ann) NoReturn
             let setBodyEnv = over definedVars addArgEnv .
                              set retType (Just $ mdef^.retType) .
                              set currentScopeName (Just $ mdef^.name.idStr) .
                              set currentClass (Just $ cdef^.name)
             tbody <- case mdef^.body of
               Nothing -> pure Nothing
-              Just b -> Just <$> local setBodyEnv (tcStmt b)
+              Just b -> Just <$>
+                do tb <- local setBodyEnv (tcStmt b)
+                   when (not $ (mdef^.retType == TVoid) || isReturning tb) $
+                     raiseErrorAt (mdef^.ann) NoReturn
+                   return (optimizeBody tb)
             pure $ CMMethod $ Method
               { _methodAnn = mdef^.ann
               , _methodAccess = mdef^.access
@@ -470,7 +475,6 @@ tcTopDef = \case
             forM_ (fmap (^.ty) $ codef^.args) tcType
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (codef^.args))
-            when (not $ isReturning (codef^.body)) $ raiseErrorAt (codef^.ann) NoReturn
             let setBodyEnv = over definedVars addArgEnv .
                              set retType (Just $ TClass (cdef^.name)) .
                              set currentScopeName (fmap (^.idStr) (codef^.name) <|> Just "unnamed constructor") .

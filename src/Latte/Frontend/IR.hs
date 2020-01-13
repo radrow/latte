@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -44,6 +45,8 @@ data FinInstr
   = Ret (Maybe Const)
   | Jmp Label
   | Br Cond Label Label
+  | TailCall String [Const] -- result fname args
+  | TailVCall String [Const]
   | Unreachable
 
 data Cond = Cond RelOp Const Const | CondConst Const
@@ -80,21 +83,25 @@ initSt :: VarMap -> TypeMap -> St
 initSt vm tm = St 0 [] vm tm
 
 data Env = Env
-  { _envRoutineLabel :: Label
-  , _envBlockName    :: Label
-  , _envNextBlock    :: Maybe Label
-  , _envTopEnv       :: TopEnv
-  , _envCurrentClass :: Maybe AST.ClassId
-  , _envDefaultRet   :: Maybe (Maybe Const)
+  { _envRoutineLabel   :: Label
+  , _envBlockName      :: Label
+  , _envNextBlock      :: Maybe Label
+  , _envTopEnv         :: TopEnv
+  , _envCurrentClass   :: Maybe AST.ClassId
+  , _envCurrentRoutine :: Maybe String
+  , _envDefaultRet     :: Maybe (Maybe Const)
+  , _envTailCall       :: Bool
   }
 initEnv :: Label -> Label -> TopCompiler Env
 initEnv r l = ask >>= \te -> pure Env
-  { _envRoutineLabel = r
-  , _envBlockName = l
-  , _envNextBlock = Nothing
-  , _envTopEnv = te
-  , _envCurrentClass = Nothing
-  , _envDefaultRet = Nothing
+  { _envRoutineLabel   = r
+  , _envBlockName      = l
+  , _envNextBlock      = Nothing
+  , _envTopEnv         = te
+  , _envCurrentClass   = Nothing
+  , _envCurrentRoutine = Nothing
+  , _envDefaultRet     = Nothing
+  , _envTailCall       = False
   }
 
 data TopEnv = TopEnv
@@ -132,9 +139,6 @@ liftTop :: TopCompiler a -> Compiler a
 liftTop act = do
   e <- view topEnv
   return $ runReader act e
-
-labelFromId :: AST.HasIdStr a String => a -> Label
-labelFromId i = Label $ i^.AST.idStr
 
 makeConstructorName :: Int -> Maybe AST.ConstructorId -> String
 makeConstructorName cid = \case
@@ -276,11 +280,18 @@ cExpr ex k = case ex of
     v <- newVar t
     write [Assg t v (UnOp uo ee)]
     k $ CVar v
-  AST.EApp _ rt f as -> mapConts cExpr as $ \asRefs -> do
-    t <- liftTop $ cType rt
-    v <- newVar t
-    write $ [Assg t v (Call (f^.AST.idStr) asRefs)]
-    k $ CVar v
+  AST.EApp _ rt f as -> do
+    tailRec <- view tailCall
+    local (set tailCall False) $ (mapConts cExpr as) $ \asRefs -> do
+      t <- liftTop $ cType rt
+      v <- newVar t
+      if tailRec
+        then do
+        cutBlock (TailCall (f^.AST.idStr) asRefs)
+        k $ CVar v
+        else do
+        write $ [Assg t v (Call (f^.AST.idStr) asRefs)]
+        k $ CVar v
   AST.EProj _ t e fld -> cExpr e $ \ce -> do
     tt <- liftTop $ cType t
     v <- newVar tt
@@ -288,11 +299,13 @@ cExpr ex k = case ex of
     offset <- liftTop $ views fieldEnv (M.! (c,fld))
     write [Assg tt v (Proj ce offset)]
     k $ CVar v
-  AST.EMApp _ rt e m as -> cExpr e $ \ce -> mapConts cExpr as $ \asRefs -> do
-    t <- liftTop $ cType rt
-    v <- newVar t
-    write $ [Assg t v (VCall (m^.AST.idStr) (ce:asRefs))]
-    k $ CVar v
+  AST.EMApp _ rt e m as -> do
+    _tailRec <- view tailCall
+    local (set tailCall False) $ cExpr e $ \ce -> mapConts cExpr as $ \asRefs -> do
+      t <- liftTop $ cType rt
+      v <- newVar t
+      write $ [Assg t v (VCall (m^.AST.idStr) (ce:asRefs))]
+      k $ CVar v
   AST.ENew _ t c n as -> mapConts cExpr as $ \asRefs -> do
     tt <- liftTop $ cType t
     alloc <- newVar tt
@@ -379,6 +392,11 @@ cStmt = \case
     cStmt k
   AST.SVRet _ _ -> do
     cutBlock (Ret Nothing)
+  AST.SRet _ e@(AST.EApp _ _ f _) _ -> do
+    myF <- views currentRoutine (fmap AST.FunId)
+    if (myF == Just f)
+      then local (set tailCall True) $ cExpr e $ \_ -> return ()
+      else cExpr e $ \ve -> cutBlock (Ret (Just ve))
   AST.SRet _ e _ -> cExpr e $ \ve ->
     cutBlock (Ret (Just ve))
   AST.SCond _ e b k -> do
@@ -423,8 +441,12 @@ cStmt = \case
         Nothing -> Unreachable
         Just r  -> Ret r
 
-compileBody :: Maybe (Maybe Const) -> Label -> St -> AST.Stmt 'AST.Typed -> TopCompiler [Block]
-compileBody defRet l st b = snd <$> liftCompiler l (local (set defaultRet defRet) (cStmt b)) st
+compileBody :: Maybe (Maybe Const) -> String -> St -> AST.Stmt 'AST.Typed
+            -> TopCompiler [Block]
+compileBody defRet rname st b =
+  snd <$> liftCompiler (Label rname)
+  (local (set defaultRet defRet . set currentRoutine (Just rname))
+    (cStmt b)) st
 
 cFunDef :: AST.FunDef 'AST.Typed -> TopCompiler Routine
 cFunDef f = do
@@ -432,9 +454,14 @@ cFunDef f = do
   let argIds = map (VarId . negate) [1..length $ f^.AST.args]
       initVarMap = M.fromList $ zip (f^.AST.args <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
-  body <- compileBody (guard (f^.AST.retType == AST.TVoid) >> Just Nothing) (labelFromId $ f^.AST.name)
+  body <- let retDeflt = if f^.AST.retType == AST.TVoid
+                       then Just Nothing
+                       else if f^.AST.name == "main"
+                            then Just (Just (CInt 0))
+                            else Nothing
+          in compileBody retDeflt (f^.AST.name.AST.idStr)
              (initSt initVarMap initTypeMap) (f^.AST.body)
-  return $  Routine (labelFromId $ f^.AST.name) argIds body
+  return $ Routine (Label $ f^.AST.name.AST.idStr) argIds body
 
 cTopDef :: AST.TopDef 'AST.Typed -> TopCompiler [Routine]
 cTopDef = \case
@@ -457,10 +484,10 @@ cMethod cl mth@AST.Method{AST._methodBody = Just methodBody} = do
   let argIds = map (VarId . negate) [1..length argsWithThis]
       initVarMap = M.fromList $ zip (argsWithThis <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
-      labelName = Label $ makeMethodName classId (mth^.AST.name)
+      labelName = makeMethodName classId (mth^.AST.name)
   r <- compileBody (guard (mth^.AST.retType == AST.TVoid) >> Just Nothing) labelName
-       (initSt initVarMap initTypeMap) (methodBody)
-  return [Routine labelName argIds r]
+       (initSt initVarMap initTypeMap) methodBody
+  return [Routine (Label labelName) argIds r]
 cMethod _ _ = return []
 
 cConstructor :: AST.ClassId -> AST.Constructor 'AST.Typed -> TopCompiler [Routine]
@@ -475,10 +502,10 @@ cConstructor cl ctr = do
   let argIds = map (VarId . negate) [1..length argsWithThis]
       initVarMap = M.fromList $ zip (argsWithThis <&> (^.AST.name)) argIds
       initTypeMap = M.fromList $ zip argIds argTypes
-      labelName = Label $ makeConstructorName classId (ctr^.AST.name)
+      labelName = makeConstructorName classId (ctr^.AST.name)
   r <- compileBody (Just (Just $ CVar (initVarMap M.! "this"))) labelName
        (initSt initVarMap initTypeMap) (ctr^.AST.body)
-  return [Routine labelName argIds r]
+  return [Routine (Label labelName) argIds r]
 
 buildMethodMap :: TopCompiler MethodMap
 buildMethodMap = do
@@ -574,7 +601,7 @@ instance Pretty Expr where
     RelOp o l r -> pPrint o <+> pPrint l <+> pPrint r
     Const c -> pPrint c
     Call f as -> text f <> parens (cat $ punctuate comma $ map pPrint as)
-    VCall f as -> "vrt " <> text f <> parens (cat $ punctuate comma $ map pPrint as)
+    VCall f as -> "vrt" <+> text f <> parens (cat $ punctuate comma $ map pPrint as)
     NewObj -> "new_obj"
     Proj a i -> "π_" <> int i <+> pPrint a
 
@@ -588,6 +615,10 @@ instance Pretty FinInstr where
     Ret c -> "RET" <+> maybe "void" pPrint c
     Jmp i -> "JMP" <+> pPrint i
     Br c i1 i2 -> "BR" <+> pPrint c <+> pPrint i1 <+> pPrint i2
+    TailCall f as ->
+      "tail" <+> text f <> parens (cat $ punctuate comma $ map pPrint as)
+    TailVCall f as ->
+      "tail" <+> "vrt" <+> text f <> parens (cat $ punctuate comma $ map pPrint as)
     Unreachable -> "*unreachable*"
 
 instance Pretty Instr where

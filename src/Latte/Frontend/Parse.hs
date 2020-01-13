@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
 module Latte.Frontend.Parse where
 
 import           Data.Functor(void, ($>))
