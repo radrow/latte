@@ -22,11 +22,9 @@ library:
   source-dirs: src
   default-extensions:
     - LambdaCase
-    - GADTs
     - DataKinds
     - MultiWayIf
     - KindSignatures
-    - TypeFamilies
     - TypeOperators
     - FlexibleInstances
     - FunctionalDependencies
