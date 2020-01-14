@@ -73,7 +73,7 @@ oExpr ex = case ex of
         Minus _ -> litI a t (il - ir)
         Mult _  -> litI a t (il * ir)
         Div _   -> case ir of
-          0 -> stop ex
+          0 -> stop (EOp a t (Op o) ll rr)
           _ -> litI a t (il `div` ir)
         Mod _   -> litI a t (il `mod` ir)
         _ -> return ex
