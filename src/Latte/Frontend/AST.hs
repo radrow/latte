@@ -16,7 +16,6 @@ import Data.String
 import Data.List.NonEmpty(NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import GHC.TypeNats(Nat, type (+))
-import Control.Lens.Extras
 import Control.Lens
 
 import Latte.Pretty

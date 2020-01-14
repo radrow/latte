@@ -32,12 +32,17 @@ pattern LB :: Bool -> Expr 'Typed
 pattern LB i <- ELit _ _ (LBool i)
 
 getVar :: VarId -> Optimizer (Maybe Lit)
-getVar v = ask >>= \rm -> uses valMap (M.lookup (rm M.! v))
+getVar v = ask >>= \rm -> uses valMap (M.lookup (rm `idOf` v))
+
+idOf :: NameMap -> VarId -> Int
+idOf nm v = case M.lookup v nm of
+  Nothing -> error $ "wtf, no such name " ++ v^.idStr
+  Just x -> x
 
 updateVar :: VarId -> Lit -> Optimizer ()
 updateVar v l = do
   rm <- ask
-  modify $ over valMap (M.insert (rm M.! v) l)
+  modify $ over valMap (M.insert (rm `idOf` v) l)
 
 assignVar :: VarId -> Expr 'Typed -> Optimizer ()
 assignVar v e = do
@@ -48,7 +53,7 @@ assignVar v e = do
 unsetVars :: S.Set VarId -> Optimizer ()
 unsetVars vars = do
   rm <- ask
-  let keep = S.map (rm M.!) $ M.keysSet rm S.\\ vars
+  let keep = S.map (idOf rm) $ M.keysSet rm S.\\ vars
   modify $ over valMap $ flip M.restrictKeys keep
 
 getSup :: Optimizer Int
@@ -196,7 +201,7 @@ oStmt s = case s of
     getVar v >>= \case
       Just (LInt i) -> updateVar v (LInt $ i-1)
       _ -> pure ()
-    continue (SIncr a v) k
+    continue (SDecr a v) k
   SCond a c t k -> do
     oc <- oExpr c
     case oc of
@@ -217,7 +222,6 @@ oStmt s = case s of
       LB False ->
         oStmt $ SBlock a e k
       _ -> do
-        vm <- ask
         ot <- oStmtScoped t
         oe <- oStmtScoped e
         let ut = varsUpdated t
@@ -225,15 +229,17 @@ oStmt s = case s of
         unsetVars (S.union ut ue)
         continue (SCondElse a oc ot oe) k
   SWhile a c b k -> do
+    let ub = varsUpdated b
+    backup <- use valMap
+    unsetVars ub
     oc <- oExpr c
     case oc of
       LB True ->
         stop (SWhile a c b (SEmpty fakeAnn))
-      LB False ->
+      LB False -> do
+        modify $ set valMap backup
         oStmt k
       _ -> do
-        let ub = varsUpdated b
-        unsetVars ub
         ob <- oStmtScoped b
         continue (SWhile a oc ob) k
   SExp a e k -> do
@@ -251,13 +257,10 @@ oStmt s = case s of
   SBlock a (SBlock _ b (SEmpty _)) k -> oStmt (SBlock a b k)
   SBlock _ (SEmpty _) k -> oStmt k
   SBlock a b k -> do
-    -- vm <- use valMap
-    -- let knownVars = M.keysSet vm
-    --     ub = varsUpdated b
     ob <- oStmt b
-    -- modify $ set valMap $ M.restrictKeys vm $ knownVars S.\\ ub
     continue (SBlock a ob) k
   SEmpty a -> pure $ SEmpty a
 
-optimizeBody :: Stmt 'Typed -> Stmt 'Typed
-optimizeBody s = evalState (runReaderT (oStmt s) M.empty) (St M.empty False 0)
+optimizeBody :: [Arg] -> Stmt 'Typed -> Stmt 'Typed
+optimizeBody as s = evalState (runReaderT (oStmt s) (M.fromList $ zip (fmap (^.name) as) [-1, -2..]))
+  (St M.empty False 0)

@@ -424,7 +424,7 @@ tcTopDef = \case
       tb <- local bodyEnv (tcStmt $ fdef^.body)
       when (not $ (fdef^.retType == TVoid) || (fdef^.name=="main") || isReturning tb) $
         raiseErrorAt (fdef^.ann) NoReturn
-      return (optimizeBody tb)
+      return (optimizeBody (fdef^.args) tb)
     pure $ TDFun $ FunDef (fdef^.ann) (fdef^.retType) (fdef^.name) (fdef^.args) tbody
   TDClass cdef -> do
     let tcMember :: ClassMember 'Untyped -> Typechecker (ClassMember 'Typed)
@@ -444,7 +444,7 @@ tcTopDef = \case
                 do tb <- local setBodyEnv (tcStmt b)
                    when (not $ (mdef^.retType == TVoid) || isReturning tb) $
                      raiseErrorAt (mdef^.ann) NoReturn
-                   return (optimizeBody tb)
+                   return (optimizeBody (mdef^.args) tb)
             pure $ CMMethod $ Method
               { _methodAnn = mdef^.ann
               , _methodAccess = mdef^.access
@@ -475,10 +475,11 @@ tcTopDef = \case
             forM_ (fmap (^.ty) $ codef^.args) tcType
             let addArgEnv =
                   flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (codef^.args))
-            let setBodyEnv = over definedVars addArgEnv .
-                             set retType (Just $ TClass (cdef^.name)) .
-                             set currentScopeName (fmap (^.idStr) (codef^.name) <|> Just "unnamed constructor") .
-                             set currentClass (Just $ cdef^.name)
+            let setBodyEnv =
+                  over definedVars addArgEnv .
+                  set retType (Just $ TClass (cdef^.name)) .
+                  set currentScopeName (fmap (^.idStr) (codef^.name) <|> Just "unnamed constructor") .
+                  set currentClass (Just $ cdef^.name)
             tbody <- local setBodyEnv (tcStmt (codef^.body))
             pure $ CMConstructor $ Constructor
               { _constructorAnn    = codef^.ann

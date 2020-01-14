@@ -9,6 +9,9 @@ import Data.Bifunctor as BF
 
 import Data.Text(pack)
 
+file :: FilePath -> (String -> IO ()) -> IO ()
+file f act = readFile f >>= act
+
 testX86 :: String -> IO ()
 testX86 s =
   case runLatteParser program "test" (pack s) >>= BF.first pp . typecheck of

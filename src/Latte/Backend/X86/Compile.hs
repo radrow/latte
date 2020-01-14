@@ -65,9 +65,12 @@ makeStrName s = do
 
 requestStr :: String -> Compiler String
 requestStr s = do
-  v <- makeStrName s
-  modify $ over strings (M.insert s v)
-  return v
+  uses strings (M.lookup s) >>= \case
+    Nothing -> do
+      v <- makeStrName s
+      modify $ over strings (M.insert s v)
+      return v
+    Just v -> return v
 
 cConst :: IR.Const -> Operand -> Compiler ()
 cConst ic o = case ic of
@@ -324,7 +327,9 @@ cVirtualMethodTables methodMap = do
 
 compileStrings :: M.Map String String -> Compiler ()
 compileStrings strs = forM_ (M.toList strs) $ \(s, v) -> do
-  l <- makeLabel ".LC"
+  sup <- nextSup
+  let l = ".LC" ++ show sup
+  label l
   string s
   label v
   long l
