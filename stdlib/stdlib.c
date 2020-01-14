@@ -23,6 +23,7 @@ int readInt() {
 string readString() {
   char *c = NULL;
   size_t s = 0;
+  scanf(" ");
   if(getline(&c, &s, stdin) == -1) {
     perror("readString: ");
   }
