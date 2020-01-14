@@ -435,8 +435,8 @@ instance Pretty (Stmt a) where
     SAssg _ v e cont -> pPrint v <+> "=" <+> pPrint e <> semi $+$ pPrint cont
     SFieldAssg _ b v e cont -> pPrint b <> "." <> pPrint v <+> "=" <+> pPrint e <> semi $+$ pPrint cont
     SDecl _ t v cont -> pPrint t <+> pPrint v <> semi $+$ pPrint cont
-    SIncr _ v cont -> "++" <> pPrint v <> semi $+$ pPrint cont
-    SDecr _ v cont -> "--" <> pPrint v <> semi $+$ pPrint cont
+    SIncr _ v cont -> pPrint v <> "++" <> semi $+$ pPrint cont
+    SDecr _ v cont -> pPrint v <> "--" <> semi $+$ pPrint cont
     SRet _ e cont -> "return" <+> pPrint e <> semi $+$ pPrint cont
     SVRet _ cont -> "return" <> semi $+$ pPrint cont
     SCond _ c t cont -> "if" <> parens (pPrint c) <+> block (pPrint t) $+$ pPrint cont

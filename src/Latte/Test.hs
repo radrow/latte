@@ -62,16 +62,20 @@ eStruct2 = unlines
   , "l.p1 = p1; l.p2 = p2; printInt(len(l)); return 1; }"
   ]
 
+-- no 2137 should be in the optimized code
 eOptim :: String
 eOptim = unlines
   [ "int main() {"
 
   , "int zero = fi() * 0;"
   , "boolean fals = false || false;"
+  , "if(true) {zero = zero + 1; zero++; int zero = 0; if(zero != 0) return 2137;}"
+  , "if(zero == 0) { return 2137; }"
   , "if(2==2 || fb()) { if(fb()) { return 1; }; }"
-  , "if(fb() && zero==0) { return 2; }"
+  , "if(fb() && zero==1) { return 2; }"
   , "if(2==2 && fals) { return 2137; } else { int x = 3;}"
-  , "while(12 * 2 > 4 - 10 && fb()) { return 4; }"
+  , "while(12 * 2 > 4 - 10 && fb()) { zero = zero+1; return 5; }"
+  , "if(zero == 1 || zero == 222) { return 6; }"
   , "if(fi() == 0) { error(); }"
   , "{"
   , "while(true) {"

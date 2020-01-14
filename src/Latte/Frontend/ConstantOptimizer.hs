@@ -6,22 +6,25 @@ module Latte.Frontend.ConstantOptimizer where
 
 import Latte.Frontend.AST
 import Control.Monad.State
-import Control.Monad.Except
-import Control.Monad
+import Control.Monad.Reader
 import Control.Lens
-import Control.Lens.Extras
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Prelude hiding (LT, GT, EQ)
 
-type ValMap = M.Map VarId Lit
+type ValMap = M.Map Int Lit
 
 data St = St
   { _stValMap :: ValMap
   , _stEarlyStop :: Bool
+  , _stSupply :: !Int
   }
 makeLensesWith abbreviatedFields ''St
 
-type Optimizer = State St
+type NameMap = M.Map VarId Int
+type Env = NameMap
+
+type Optimizer = ReaderT Env (State St)
 
 pattern LI :: Integer -> Expr 'Typed
 pattern LI i <- ELit _ _ (LInt i)
@@ -29,13 +32,27 @@ pattern LB :: Bool -> Expr 'Typed
 pattern LB i <- ELit _ _ (LBool i)
 
 getVar :: VarId -> Optimizer (Maybe Lit)
-getVar v = uses valMap (M.lookup v)
+getVar v = ask >>= \rm -> uses valMap (M.lookup (rm M.! v))
+
+updateVar :: VarId -> Lit -> Optimizer ()
+updateVar v l = do
+  rm <- ask
+  modify $ over valMap (M.insert (rm M.! v) l)
 
 assignVar :: VarId -> Expr 'Typed -> Optimizer ()
 assignVar v e = do
   oExpr e >>= \case
-    ELit _ _ x -> modify $ over valMap (M.insert v x)
+    ELit _ _ x -> updateVar v x
     _ -> pure ()
+
+unsetVars :: S.Set VarId -> Optimizer ()
+unsetVars vars = do
+  rm <- ask
+  let keep = S.map (rm M.!) $ M.keysSet rm S.\\ vars
+  modify $ over valMap $ flip M.restrictKeys keep
+
+getSup :: Optimizer Int
+getSup = use supply <* modify (over supply (+1))
 
 litI :: Ann -> Type -> Integer -> Optimizer (Expr 'Typed)
 litI a t i = return $ ELit a t $ LInt i
@@ -50,8 +67,8 @@ oExpr :: Expr 'Typed -> Optimizer (Expr 'Typed)
 oExpr ex = case ex of
   ELit _ _ _ -> return ex
   EVar a t v -> maybe ex (ELit a t) <$> getVar v
-  EApp _ _ fname as | fname == "error" -> stop ex
-  EApp _ _ fname as -> return ex
+  EApp _ _ fname [] | fname == "error" -> stop ex
+  EApp _ _ _fname _as -> return ex
   EUnOp a t o e -> do
     v <- oExpr e
     case (o, v) of
@@ -107,27 +124,62 @@ oExpr ex = case ex of
 
       (LB True, _, Or _) -> litB a t True
       (_, LB True, Or _) -> litB a t True
-      _ -> return ex
+      _ -> return $ EOp a t (Op o) ll rr
   _ -> return ex
+
+varsScoped :: Stmt 'Typed -> S.Set VarId
+varsScoped = \case
+  SDecl _a _t v k -> S.insert v $ varsScoped k
+  SAssg _a _v _e k -> varsScoped k
+  SFieldAssg _a _b _f _e k -> varsScoped k
+  SIncr _a _v k -> varsScoped k
+  SDecr _a _v k -> varsScoped k
+  SCond _a _c _t k -> varsScoped k
+  SCondElse _a _c _t _e k -> varsScoped k
+  SWhile _a _c _b k -> varsScoped k
+  SExp _a _e k -> varsScoped k
+  SRet _a _e _k -> S.empty
+  SVRet _a _k -> S.empty
+  SBlock _a _b k -> varsScoped k
+  SEmpty _a -> S.empty
+
+
+varsUpdated :: Stmt 'Typed -> S.Set VarId
+varsUpdated = \case
+  SDecl _a _t v k -> S.delete v $ varsUpdated k
+  SAssg _a v _e k -> S.insert v $ varsUpdated k
+  SFieldAssg _a _b _f _e k -> varsUpdated k
+  SIncr _a v k -> S.insert v $ varsUpdated k
+  SDecr _a v k -> S.insert v $ varsUpdated k
+  SCond _a _c t k -> S.union (varsUpdated t) (varsUpdated k)
+  SCondElse _a _c t e k -> S.unions [varsUpdated t, varsUpdated e, varsUpdated k]
+  SWhile _a _c b k -> S.union (varsUpdated b) (varsUpdated k)
+  SExp _a _e k -> varsUpdated k
+  SRet _a _e _k -> S.empty
+  SVRet _a _k -> S.empty
+  SBlock _a b k -> S.union (varsUpdated b) (varsUpdated k)
+  SEmpty _a -> S.empty
 
 
 oStmtScoped :: Stmt 'Typed -> Optimizer (Stmt 'Typed)
 oStmtScoped ob = do
-  backup <- use earlyStop
+  backupStop <- use earlyStop
   modify $ set earlyStop False
   res <- oStmt ob
-  modify $ set earlyStop backup
+  modify $ set earlyStop backupStop
   return res
 
 continue :: (Stmt 'Typed -> Stmt 'Typed) -> Stmt 'Typed -> Optimizer (Stmt 'Typed)
 continue b k = do
-  break <- use earlyStop
-  if break then return (b (SEmpty fakeAnn)) else b <$> oStmt k
+  es <- use earlyStop
+  if es then return (b (SEmpty fakeAnn)) else b <$> oStmt k
 
 oStmt :: Stmt 'Typed -> Optimizer (Stmt 'Typed)
 oStmt s = case s of
   SDecl a t v k -> do
-    continue (SDecl a t v) k
+    uniqV <- getSup
+    local (M.insert v uniqV) $ continue (SDecl a t v) k
+  SAssg _a v (EVar _ _ vv) k | v == vv -> oStmt k
   SAssg a v e k -> do
     oe <- oExpr e
     assignVar v oe
@@ -137,12 +189,12 @@ oStmt s = case s of
     continue (SFieldAssg a b f oe) k
   SIncr a v k -> do
     getVar v >>= \case
-      Just (LInt i) -> modify $ over valMap $ M.insert v (LInt $ i+1)
+      Just (LInt i) -> updateVar v (LInt $ i+1)
       _ -> pure ()
     continue (SIncr a v) k
   SDecr a v k -> do
     getVar v >>= \case
-      Just (LInt i) -> modify $ over valMap $ M.insert v (LInt $ i-1)
+      Just (LInt i) -> updateVar v (LInt $ i-1)
       _ -> pure ()
     continue (SIncr a v) k
   SCond a c t k -> do
@@ -154,6 +206,8 @@ oStmt s = case s of
         oStmt k
       _ -> do
         ot <- oStmtScoped t
+        let ut = varsUpdated t
+        unsetVars ut
         continue (SCond a oc ot) k
   SCondElse a c t e k -> do
     oc <- oExpr c
@@ -163,8 +217,12 @@ oStmt s = case s of
       LB False ->
         oStmt $ SBlock a e k
       _ -> do
+        vm <- ask
         ot <- oStmtScoped t
         oe <- oStmtScoped e
+        let ut = varsUpdated t
+            ue = varsUpdated e
+        unsetVars (S.union ut ue)
         continue (SCondElse a oc ot oe) k
   SWhile a c b k -> do
     oc <- oExpr c
@@ -174,6 +232,8 @@ oStmt s = case s of
       LB False ->
         oStmt k
       _ -> do
+        let ub = varsUpdated b
+        unsetVars ub
         ob <- oStmtScoped b
         continue (SWhile a oc ob) k
   SExp a e k -> do
@@ -191,9 +251,13 @@ oStmt s = case s of
   SBlock a (SBlock _ b (SEmpty _)) k -> oStmt (SBlock a b k)
   SBlock _ (SEmpty _) k -> oStmt k
   SBlock a b k -> do
+    -- vm <- use valMap
+    -- let knownVars = M.keysSet vm
+    --     ub = varsUpdated b
     ob <- oStmt b
+    -- modify $ set valMap $ M.restrictKeys vm $ knownVars S.\\ ub
     continue (SBlock a ob) k
   SEmpty a -> pure $ SEmpty a
 
 optimizeBody :: Stmt 'Typed -> Stmt 'Typed
-optimizeBody s = evalState (oStmt s) (St M.empty False)
+optimizeBody s = evalState (runReaderT (oStmt s) M.empty) (St M.empty False 0)
