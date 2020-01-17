@@ -217,7 +217,7 @@ cExpr t vloc e = case e of
       cConst a eax
       push eax
     call (OLabel $ makeMethodDispatcherName f)
-    add (OConst $ 4 * fromIntegral (length as + 1)) esp
+    add (OConst $ 4 * fromIntegral (length as)) esp
     mov eax vloc
 
 cInstr :: IR.Instr -> Compiler ()
@@ -270,7 +270,7 @@ cBlock (IR.Block (IR.Label bname) instrs fin) = do
   cFinInstr fin
 
 cRoutine :: IR.Routine -> Compiler ()
-cRoutine (IR.Routine (IR.Label rname) args blocks) = do
+cRoutine (IR.Routine virt (IR.Label rname) args blocks) = do
   globl rname
   let locals = S.unions (map IR.getUsedVars blocks) S.\\ S.fromList args
       routineVarEnv = M.fromList $ localSupply ++ argSupply where
@@ -286,8 +286,9 @@ cRoutine (IR.Routine (IR.Label rname) args blocks) = do
                    return (v, mem ((4::Int) * i) EBP :: Operand)) args
   local (set varMap routineVarEnv) $ do
     label rname
-    push ebp
-    mov esp ebp
+    when (Prelude.not virt) $ do
+      push ebp
+      mov esp ebp
     sub (OConst $ fromIntegral $ length locals * 4) esp
     forM_ blocks cBlock
 
@@ -314,15 +315,13 @@ cVirtualMethodTables methodMap = do
     push ebp
     mov esp ebp
 
-    mov (mem (8 :: Int) ESP) ecx
+    mov (mem (8 :: Int) EBP) ecx
     mov (mem ECX) ecx
 
     lea (OLabel vtableName) edx
     mov (mem (EDX, ECX, 4 :: Int)) edx
 
-    call edx
-    leave
-    ret
+    jmp edx
 
 
 compileStrings :: M.Map String String -> Compiler ()

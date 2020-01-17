@@ -33,7 +33,7 @@ data Type = TInt Int | TString | TVoid | TObj Int [Type]
 
 data IR = IR [Routine]
 
-data Routine = Routine Label [VarId] [Block]
+data Routine = Routine Bool Label [VarId] [Block]
 
 data Block = Block Label [Instr] FinInstr
 
@@ -461,7 +461,7 @@ cFunDef f = do
                             else Nothing
           in compileBody retDeflt (f^.AST.name.AST.idStr)
              (initSt initVarMap initTypeMap) (f^.AST.body)
-  return $ Routine (Label $ f^.AST.name.AST.idStr) argIds body
+  return $ Routine False (Label $ f^.AST.name.AST.idStr) argIds body
 
 cTopDef :: AST.TopDef 'AST.Typed -> TopCompiler [Routine]
 cTopDef = \case
@@ -487,7 +487,7 @@ cMethod cl mth@AST.Method{AST._methodBody = Just methodBody} = do
       labelName = makeMethodName classId (mth^.AST.name)
   r <- compileBody (guard (mth^.AST.retType == AST.TVoid) >> Just Nothing) labelName
        (initSt initVarMap initTypeMap) methodBody
-  return [Routine (Label labelName) argIds r]
+  return [Routine True (Label labelName) argIds r]
 cMethod _ _ = return []
 
 cConstructor :: AST.ClassId -> AST.Constructor 'AST.Typed -> TopCompiler [Routine]
@@ -505,7 +505,7 @@ cConstructor cl ctr = do
       labelName = makeConstructorName classId (ctr^.AST.name)
   r <- compileBody (Just (Just $ CVar (initVarMap M.! "this"))) labelName
        (initSt initVarMap initTypeMap) (ctr^.AST.body)
-  return [Routine (Label labelName) argIds r]
+  return [Routine False (Label labelName) argIds r]
 
 buildMethodMap :: TopCompiler MethodMap
 buildMethodMap = do
@@ -631,8 +631,9 @@ instance Pretty Block where
     pPrint i <> ":" $+$ nest 2 ((vcat (map pPrint is)) $+$ pPrint f)
 
 instance Pretty Routine where
-  pPrint (Routine i as b) =
-    "@" <> pPrint i <> parens (cat $ punctuate comma $ map pPrint as) <> ":" $+$ nest 2 (vcat (map pPrint b))
+  pPrint (Routine virt i as b) =
+    (if virt then "V@" else "@") <> pPrint i <> parens (cat $ punctuate comma $ map pPrint as) <>
+    ":" $+$ nest 2 (vcat (map pPrint b))
 
 instance Pretty IR where
   pPrint (IR rs) = vcat (map pPrint rs)
