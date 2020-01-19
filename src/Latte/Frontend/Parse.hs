@@ -338,8 +338,8 @@ topDef = choice
 
 
 classDef :: Parser (AST.ClassDef 'AST.Untyped)
-classDef = withAnnP AST.ClassDef
-  <*> try (word "class" *> classId)
+classDef = word "class" *> withAnnP AST.ClassDef
+  <*> classId
   <*> optional (word "extends" *> classId)
   <*> brac (many classMember)
 
@@ -362,7 +362,7 @@ classMember = choice
 
 method :: Parser (AST.Method 'AST.Untyped)
 method = withAnnP AST.Method
-  <*> classMemberAccess
+  <*> classMemberAccess AST.Protected
   <*> classMemberPlace
   <*> type_
   <*> methodId
@@ -372,7 +372,7 @@ method = withAnnP AST.Method
 
 field :: Parser (AST.Field 'AST.Untyped)
 field = withAnnP AST.Field
-  <*> classMemberAccess
+  <*> classMemberAccess AST.Protected
   <*> classMemberPlace
   <*> type_
   <*> decls fieldId
@@ -380,16 +380,19 @@ field = withAnnP AST.Field
 
 
 constructor :: Parser (AST.Constructor 'AST.Untyped)
-constructor = withAnnP AST.Constructor
-  <*> (word "new" *> classMemberAccess)
+constructor = word "new" *> withAnnP AST.Constructor
+  <*> classMemberAccess AST.Public
   <*> optional constructorId
   <*> args
   <*> body
 
 
-classMemberAccess :: Parser AST.ClassMemberAccess
-classMemberAccess =
-  word "public" $> AST.Public <|> pure AST.Private
+classMemberAccess :: AST.ClassMemberAccess -> Parser AST.ClassMemberAccess
+classMemberAccess dflt =
+  word "private" $> AST.Private <|>
+  word "protected" $> AST.Protected <|>
+  word "public" $> AST.Public <|>
+  pure dflt
 
 
 classMemberPlace :: Parser AST.ClassMemberPlace

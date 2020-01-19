@@ -38,14 +38,14 @@ type TopTypechecker =
 
 type VarEnv   = Map VarId Type
 type FunEnv   = Map FunId (Type, [Type])
-type ConEnv   = Map (Maybe ConstructorId) [Type]
+type ConEnv   = Map (Maybe ConstructorId) (ClassMemberAccess, [Type])
 type ClassEnv = Map ClassId ClassEntry
 
 
 data ClassEntry = ClassEntry
   { _ceSuper        :: Maybe ClassId
-  , _ceFields       :: Map FieldId Type
-  , _ceMethods      :: Map MethodId (Type, [Type])
+  , _ceFields       :: Map FieldId (ClassMemberAccess, Type)
+  , _ceMethods      :: Map MethodId (ClassMemberAccess, (Type, [Type]))
   , _ceConstructors :: ConEnv
   }
 

@@ -90,10 +90,10 @@ cType t = case t of
     i <- views classIds (M.! c)
     let processFields cc =
           let ce = cenv M.! cc in case (ce ^. AST.super) of
-            Nothing -> mapM cType (M.elems $ ce^.Tc.fields)
+            Nothing -> mapM cType (map snd $ M.elems $ ce^.Tc.fields)
             Just x -> do
               sfs <- processFields x
-              fs <- mapM cType (M.elems $ ce^.Tc.fields)
+              fs <- mapM cType (map snd $ M.elems $ ce^.Tc.fields)
               return (sfs ++ fs)
     fs <- processFields c
     return $ TObj i fs

@@ -236,7 +236,7 @@ data ClassMemberPlace = Dynamic | Static
   deriving (Show)
 
 
-data ClassMemberAccess = Private | Public
+data ClassMemberAccess = Private | Public | Protected
   deriving (Show)
 
 

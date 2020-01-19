@@ -32,6 +32,8 @@ data Error
   | NotAClass Type
   | NotInClass
   | ThisArgName
+  | BadPrivateAccess ClassId String
+  | BadProtectedAccess ClassId String
 
 instance Pretty Error where
   pPrint = \case
@@ -117,3 +119,10 @@ instance Pretty Error where
 
     ThisArgName ->
       emph "this" <+> "is a bad namey-calley for such uwu arg :( :'("
+
+    BadPrivateAccess c f ->
+      "o my gosh daddy plz dont touch my" <+> emph (text f) <+> "in my" <+> emph (pPrint c) <+> "itz my" <+>
+      emph "private" <+> "part :'("
+
+    BadProtectedAccess c f ->
+      "daddy wanna touch my" <+> emph (text f) <+> "in my" <+> emph (pPrint c) <+> "but *moMmy* hav" <+> emph "protected" <+> "it xoxox"

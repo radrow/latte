@@ -63,6 +63,18 @@ tcFun v = (M.lookup v) <$> view definedFuns >>= \case
   Just t -> pure t
 
 
+checkAccess :: HasIdStr a String => ClassMemberAccess -> a -> ClassId -> Typechecker ()
+checkAccess a x c = do
+  myC <- view currentClass
+  case a of
+    Public -> pure ()
+    Private -> when (myC /= Just c) $ raiseError $ BadPrivateAccess c (x^.idStr)
+    Protected -> do
+      maybe (pure False) (isSuper c) myC >>= \case
+        False -> raiseError $ BadProtectedAccess c (x^.idStr)
+        True -> pure ()
+
+
 tcField :: ClassId -> FieldId -> Typechecker Type
 tcField c m =
   let search sc = do
@@ -71,7 +83,9 @@ tcField c m =
           Nothing -> case ce^.super of
             Nothing -> raiseError $ UndefinedField c m
             Just x -> search x
-          Just x -> pure x
+          Just (acc, x) -> do
+            checkAccess acc m sc
+            pure x
   in search c
 
 
@@ -83,7 +97,9 @@ tcMethod c m =
           Nothing -> case ce^.super of
             Nothing -> raiseError $ UndefinedMethod c m
             Just x -> search x
-          Just x -> pure x
+          Just (acc, x) -> do
+            checkAccess acc m sc
+            pure x
   in search c
 
 
@@ -92,7 +108,7 @@ tcConstructor c m = do
   ce <- getClassEntry c
   case M.lookup m (ce^.constructors) of
     Nothing -> raiseError $ UndefinedConstructor c m
-    Just ts -> pure ts
+    Just (_, ts) -> pure ts
 
 
 matchTypes :: Type -> Type -> Typechecker ()
@@ -105,16 +121,20 @@ matchTypes want got = case (want, got) of
   _ -> raiseError $ TypeMatch want got
 
 
-matchClass :: ClassId -> ClassId -> Typechecker ()
-matchClass c1 c2 =
-  let search i1 i2 =
-        if i1 == i2 then pure True
-        else getClassEntry i2 >>= \ce -> case ce^.super of
+isSuper :: ClassId -> ClassId -> Typechecker Bool
+isSuper cs c =
+  let search i =
+        if cs == i then pure True
+        else getClassEntry i >>= \ce -> case ce^.super of
           Nothing -> pure False
-          Just i2' -> search i1 i2'
-  in search c1 c2 >>= \case
-    True -> pure ()
-    False -> raiseError $ ClassMatch c1 c2
+          Just i' -> search i'
+  in search c
+
+
+matchClass :: ClassId -> ClassId -> Typechecker ()
+matchClass c1 c2 = isSuper c1 c2 >>= \case
+  True -> pure ()
+  False -> raiseError $ ClassMatch c1 c2
 
 
 assertType :: Type -> Expr 'Typed -> Typechecker ()
@@ -308,19 +328,21 @@ buildClassEntry c = ClassEntry
   { _ceSuper = c ^. super
   , _ceFields = M.fromList
                 [(i, t) | (CMField f) <- c^.body
-                        , let t = f^.ty
+                        , let t = (f^.access, f^.ty)
                         , (i, _) <- NE.toList (f^.assignments)
                         ]
   , _ceMethods = M.fromList
-                 [(i, (rt, as)) | (CMMethod m) <- c^.body
+                 [(i, (acc, (rt, as))) | (CMMethod m) <- c^.body
                           , let as = fmap (^.ty) $ m^.args
                                 rt = m^.retType
                                 i = m^.name
+                                acc = m^.access
                           ]
   , _ceConstructors = M.fromList
-    [(i, as) | (CMConstructor co) <- c^.body
+    [(i, (acc, as)) | (CMConstructor co) <- c^.body
              , let as = fmap (^.ty) $ co^.args
                    i = co^.name
+                   acc = co^.access
              ]
   }
 
