@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE GADTs #-}
-module Latte.Frontend.ConstantOptimizer where
+module Latte.Frontend.AST.ConstantOptimizer(optimizeBody, optimizeProgram) where
 
 import Latte.Frontend.AST
 import Control.Monad.State
@@ -12,7 +12,9 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Prelude hiding (LT, GT, EQ)
 
+
 type ValMap = M.Map Int Lit
+
 
 data St = St
   { _stValMap :: ValMap
@@ -21,28 +23,35 @@ data St = St
   }
 makeLensesWith abbreviatedFields ''St
 
+
 type NameMap = M.Map VarId Int
 type Env = NameMap
 
+
 type Optimizer = ReaderT Env (State St)
+
 
 pattern LI :: Integer -> Expr 'Typed
 pattern LI i <- ELit _ _ (LInt i)
 pattern LB :: Bool -> Expr 'Typed
 pattern LB i <- ELit _ _ (LBool i)
 
+
 getVar :: VarId -> Optimizer (Maybe Lit)
 getVar v = ask >>= \rm -> uses valMap (M.lookup (rm `idOf` v))
+
 
 idOf :: NameMap -> VarId -> Int
 idOf nm v = case M.lookup v nm of
   Nothing -> error $ "wtf, no such name " ++ v^.idStr
   Just x -> x
 
+
 updateVar :: VarId -> Lit -> Optimizer ()
 updateVar v l = do
   rm <- ask
   modify $ over valMap (M.insert (rm `idOf` v) l)
+
 
 assignVar :: VarId -> Expr 'Typed -> Optimizer ()
 assignVar v e = do
@@ -50,23 +59,29 @@ assignVar v e = do
     ELit _ _ x -> updateVar v x
     _ -> pure ()
 
+
 unsetVars :: S.Set VarId -> Optimizer ()
 unsetVars vars = do
   rm <- ask
   let keep = S.map (idOf rm) $ M.keysSet rm S.\\ vars
   modify $ over valMap $ flip M.restrictKeys keep
 
+
 getSup :: Optimizer Int
 getSup = use supply <* modify (over supply (+1))
+
 
 litI :: Ann -> Type -> Integer -> Optimizer (Expr 'Typed)
 litI a t i = return $ ELit a t $ LInt i
 
+
 litB :: Ann -> Type -> Bool -> Optimizer (Expr 'Typed)
 litB a t i = return $ ELit a t $ LBool i
 
+
 stop :: a -> Optimizer a
 stop a = modify (set earlyStop True) >> pure a
+
 
 oExpr :: Expr 'Typed -> Optimizer (Expr 'Typed)
 oExpr ex = case ex of
@@ -132,22 +147,6 @@ oExpr ex = case ex of
       _ -> return $ EOp a t (Op o) ll rr
   _ -> return ex
 
-varsScoped :: Stmt 'Typed -> S.Set VarId
-varsScoped = \case
-  SDecl _a _t v k -> S.insert v $ varsScoped k
-  SAssg _a _v _e k -> varsScoped k
-  SFieldAssg _a _b _f _e k -> varsScoped k
-  SIncr _a _v k -> varsScoped k
-  SDecr _a _v k -> varsScoped k
-  SCond _a _c _t k -> varsScoped k
-  SCondElse _a _c _t _e k -> varsScoped k
-  SWhile _a _c _b k -> varsScoped k
-  SExp _a _e k -> varsScoped k
-  SRet _a _e _k -> S.empty
-  SVRet _a _k -> S.empty
-  SBlock _a _b k -> varsScoped k
-  SEmpty _a -> S.empty
-
 
 varsUpdated :: Stmt 'Typed -> S.Set VarId
 varsUpdated = \case
@@ -174,10 +173,12 @@ oStmtScoped ob = do
   modify $ set earlyStop backupStop
   return res
 
+
 continue :: (Stmt 'Typed -> Stmt 'Typed) -> Stmt 'Typed -> Optimizer (Stmt 'Typed)
 continue b k = do
   es <- use earlyStop
   if es then return (b (SEmpty fakeAnn)) else b <$> oStmt k
+
 
 oStmt :: Stmt 'Typed -> Optimizer (Stmt 'Typed)
 oStmt s = case s of
@@ -261,6 +262,22 @@ oStmt s = case s of
     continue (SBlock a ob) k
   SEmpty a -> pure $ SEmpty a
 
+
 optimizeBody :: [Arg] -> Stmt 'Typed -> Stmt 'Typed
 optimizeBody as s = evalState (runReaderT (oStmt s) (M.fromList $ zip (fmap (^.name) as) [-1, -2..]))
   (St M.empty False 0)
+
+
+optimizeProgram :: Program 'Typed -> Program 'Typed
+optimizeProgram (Program ts) = Program $ flip fmap ts $ \case
+  TDFun f@FunDef{_fundefArgs = as, _fundefBody = b} -> TDFun f{_fundefBody = optimizeBody as b}
+  TDClass cs@ClassDef{_classdefBody = cms} ->
+    TDClass $ cs
+    {_classdefBody =
+     let this = Arg { _argAnn = fakeAnn, _argName = "this", _argTy = TClass (cs^.name) }
+     in flip fmap cms $
+     \case
+        CMField f -> CMField f
+        CMMethod m@Method{_methodArgs = as, _methodBody = b} -> CMMethod m{_methodBody = fmap (optimizeBody (this:as)) b}
+        CMConstructor c@Constructor{_constructorArgs = as, _constructorBody = b} -> CMConstructor c{_constructorBody = optimizeBody (this:as) b}
+    }

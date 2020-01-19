@@ -111,10 +111,12 @@ word w = lex $ try $ string w >> notFollowedBy alphaNumChar >> skip
 
 paren :: Parser a -> Parser a
 paren = between (L.symbol skip "(") (L.symbol skip ")")
+{-# INLINE paren #-}
 
 
 brac :: Parser a -> Parser a
 brac = between (L.symbol skip "{") (L.symbol skip "}")
+{-# INLINE brac #-}
 
 
 infixL :: Parser (a -> b -> a) -> Parser b -> a -> Parser a
@@ -132,7 +134,7 @@ funId :: Parser AST.FunId
 funId = AST.FunId <$> validId lId
 
 classId :: Parser AST.ClassId
-classId = AST.ClassId <$> validId lId
+classId = AST.ClassId <$> validId uId
 
 fieldId :: Parser AST.FieldId
 fieldId =  AST.FieldId <$> validId lId
@@ -265,7 +267,6 @@ rawDecls p = sepBy1 (rawDecl p) (symbol ",")
 decl :: AST.IsId id => Parser id -> Parser (id, Maybe (AST.Expr 'AST.Untyped))
 decl p = fmap (fmap AST.entailExpr) <$> rawDecl p
 
-
 decls :: AST.IsId id => Parser id -> Parser (NE.NonEmpty (id, Maybe (AST.Expr 'AST.Untyped)))
 decls p = sepBy1 (decl p) (symbol ",")
 
@@ -273,8 +274,10 @@ decls p = sepBy1 (decl p) (symbol ",")
 semicolon :: Parser ()
 semicolon = void $ symbol ";"
 
+
 appliedArgs :: Parser [AST.RawExpr 0]
 appliedArgs = paren (sepBy expr0 (symbol ","))
+
 
 stmt :: Parser AST.RawStmt
 stmt = choice
@@ -300,6 +303,7 @@ stmt = choice
              ) <*> rawExpr <*> optional (operator "=" *> rawExpr) <* semicolon
   , withAnn (pure AST.RSEmpty) <* semicolon
   ]
+
 
 block :: Parser AST.RawStmt
 block = withAnnP AST.RSBlock <*> brac (many stmt)
@@ -332,11 +336,13 @@ topDef = choice
   , AST.TDClass <$> classDef
   ]
 
+
 classDef :: Parser (AST.ClassDef 'AST.Untyped)
 classDef = withAnnP AST.ClassDef
   <*> try (word "class" *> classId)
   <*> optional (word "extends" *> classId)
   <*> brac (many classMember)
+
 
 funDef :: Parser (AST.FunDef 'AST.Untyped)
 funDef = withAnnP AST.FunDef
@@ -353,6 +359,7 @@ classMember = choice
   , AST.CMConstructor <$> constructor
   ]
 
+
 method :: Parser (AST.Method 'AST.Untyped)
 method = withAnnP AST.Method
   <*> classMemberAccess
@@ -362,6 +369,7 @@ method = withAnnP AST.Method
   <*> args
   <*> optional body
 
+
 field :: Parser (AST.Field 'AST.Untyped)
 field = withAnnP AST.Field
   <*> classMemberAccess
@@ -370,12 +378,14 @@ field = withAnnP AST.Field
   <*> decls fieldId
   <* semicolon
 
+
 constructor :: Parser (AST.Constructor 'AST.Untyped)
 constructor = withAnnP AST.Constructor
   <*> (word "new" *> classMemberAccess)
   <*> optional constructorId
   <*> args
   <*> body
+
 
 classMemberAccess :: Parser AST.ClassMemberAccess
 classMemberAccess =
@@ -385,6 +395,7 @@ classMemberAccess =
 classMemberPlace :: Parser AST.ClassMemberPlace
 classMemberPlace =
   word "static" $> AST.Static <|> pure AST.Dynamic
+
 
 program :: Parser (AST.Program 'AST.Untyped)
 program = AST.Program <$> many topDef
