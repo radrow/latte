@@ -7,6 +7,7 @@ module Latte.Frontend.Typecheck.Typechecker where
 import Latte.Frontend.AST
 import Latte.Frontend.Error
 import Latte.Frontend.Typecheck.Types
+import qualified Latte.Frontend.AST.ConstantOptimizer as CO
 
 import Data.Functor
 import qualified Data.Map as M
@@ -414,7 +415,7 @@ tcTopDef = \case
           flip M.union (M.fromList $ fmap (\a -> (a^.name, a^.ty)) (fdef^.args))
     let bodyEnv = (over definedVars addArgEnv . set retType (Just $ fdef^.retType))
     tbody <- do
-      tb <- local bodyEnv (tcStmt $ fdef^.body)
+      tb <- CO.optimizeBody (fdef^.args) <$> local bodyEnv (tcStmt $ fdef^.body)
       when (not $ (fdef^.retType == TVoid) || (fdef^.name=="main") || isReturning tb) $
         raiseErrorAt (fdef^.ann) NoReturn
       return tb
@@ -434,7 +435,7 @@ tcTopDef = \case
             tbody <- case mdef^.body of
               Nothing -> pure Nothing
               Just b -> Just <$>
-                do tb <- local setBodyEnv (tcStmt b)
+                do tb <- CO.optimizeBody (mdef^.args) <$> local setBodyEnv (tcStmt b)
                    when (not $ (mdef^.retType == TVoid) || isReturning tb) $
                      raiseErrorAt (mdef^.ann) NoReturn
                    return tb
@@ -476,7 +477,7 @@ tcTopDef = \case
                   set retType (Just $ TClass (cdef^.name)) .
                   set currentScopeName (fmap (^.idStr) (codef^.name) <|> Just "unnamed constructor") .
                   set currentClass (Just $ cdef^.name)
-            tbody <- local setBodyEnv (tcStmt (codef^.body))
+            tbody <- CO.optimizeBody (codef^.args) <$> local setBodyEnv (tcStmt (codef^.body))
             pure $ CMConstructor $ Constructor
               { _constructorAnn    = codef^.ann
               , _constructorAccess = codef^.access
