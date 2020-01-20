@@ -1,0 +1,12 @@
+int main() {
+  return f(123);
+}
+
+int f(int x) {
+  int k = 10 - 10 + 0;
+  if(x == x || k * g(x) == 0/1) { return 1; }
+}
+
+int g(int k) {
+  error();
+}
