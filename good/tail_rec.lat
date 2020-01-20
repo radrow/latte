@@ -1,0 +1,29 @@
+/*
+
+Tail recursion presentation. This code should work fine.
+If you set useTail to false, the stack should overflow.
+
+*/
+
+int identityTail(int x) {
+  return identityTailH(x, 0);
+}
+int identityTailH(int x, int acc) {
+  if(x == 0) return acc;
+  else return identityTailH(x-1, acc+1);
+}
+
+int identityNotail(int x) {
+  if(x == 0) return 0;
+  return identityNotail(x-1) + 1;
+}
+
+int main() {
+  int load = 1000000000;
+  boolean useTail = true;
+
+  int x;
+  if(useTail) x = identityTail(load);
+  else x = identityNotail(load);
+  printInt(x);
+}

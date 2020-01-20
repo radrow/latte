@@ -1,0 +1,44 @@
+class Base {
+  new() { return this; }
+
+  new smart(int x) {
+    if (x == 0) {
+      Sub1 o;
+      return o;
+    } else if (x == 1) {
+      Sub2 o;
+      return o;
+    } else if (x == 2) {
+      Sub3 o;
+      return o;
+    } else return this;
+  }
+
+  public int f(int x) {
+    printInt(x);
+    return 21;
+  }
+}
+
+class Sub1 extends Base {
+  int f(int x) {
+    printInt(x);
+    return 42;
+  }
+}
+class Sub2 extends Base {
+  int f(int x) {
+    printInt(x);
+    return super.f(x) + 10000;
+  }
+}
+class Sub3 extends Base {}
+
+int main() {
+  printInt(new Base().f(-1));
+  printInt(new Base.smart(0).f(0));
+  printInt(new Base.smart(1).f(1));
+  printInt(new Base.smart(2).f(2));
+  printInt(new Base.smart(3).f(3));
+  return 0;
+}

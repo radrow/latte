@@ -2,50 +2,82 @@
 
 * Latte
 
-Napisany w Haskellu kompilator podzbioru języka Latte
+A simple object-oriented programming language compiler. An assesment task for MIMUW Compiler Construction course.
 
-** Instalacja
+** Build & Installation
 
-Do skompilowania należy użyć programu ~stack~, który znajduje się na maszynie students w katalogu ~/home/students/inf/PUBLIC/MRJP/Stack~ lub pod nazwą ~haskell_stack~ na debianach w laboratoriach. Ewentualnie można pobrać je bezpośrednio z repozytorium ~community~ na Arch Linuxie, lub ściągnąć ze strony ~https://get.haskellstack.org~.
+To build the compiler one needs ~stack~ program installed. The ~Makefile~ will try to search for it in ~PATH~ and in places that could be used on MIMUW machines. If you don't have ~stack~, please navigate to [[https://get.haskellstack.org][their website]].
 
-Polecenie kompilacji: ~stack build~
-Polecenie instalacji w lokalnym katalogu: ~stack install --local-bin-path=$(shell pwd)~
+The ~make~ script will automatically download all dependencies. They can be inspected in the configuration file ~package.yaml~. Please note that it may require some free disk space and internet connection, as it will download GHC along with required libraries.
 
-Program sam pobierze odpowiednie zależności, które mogą być sprawdzone w pliku konfiguracyjnym ~package.yaml~.  Instalator może wymagać odpowiednio dużych (ale rozsądnych) zasobów pamięciowych.
 
-Po zbudowaniu można uruchomić program poleceniem ~stack exec lattec~ lub po instalacji uruchomić program ~lattec~. 
+** Project structure
 
-** Struktura projektu
+Standard ~stack~ style is in use.
 
-Obowiązuje standardowa konwencja stackowych projektów.
+Main part of code is settled in the ~src~ folder which is divided to ~Frontend~ and ~Backend~ subfolders. In the former one there is whole logic related to parsing, typechecking, AST optimization and intermediate representation. The latter contains final compiler parts – currently only x86-32bit one.
 
-Główna część kodu znajduje się w folderze ~src~. Podzielony jest on na części ~Frontend~, ~Backend~ oraz ~Semantics~. W pierwszej znajduje się cała logika parsera, typechecker i reprezentacja pośrednia. W drugiej docelowo mają być zaimplementowane finalne części kompilatora – jak na razie jest tylko X86 32bit. Część semantyczna nie jest oficjalną częścią projektu i miały się tam znajdować interpretery poszczególnych reprezentacji kodu – można ją zignorować.
+Directory ~stdlib~ contains standard library implemented in C language. Note that the compiler makes use of the temporary folder (~/tmp/~ on linux) and therefore it needs access to it. I will use ~gcc~ and assume that it can be found in the ~PATH~.
 
-W folderze ~stdlib~ jest zaimplementowana biblioteka standardowa w języku C. Do skompilowania jej wymagany jest dostęp do folderu tymczasowego (na linuxie ~/tmp~) oraz kompilator GCC w zmiennej środowiskowej ~PATH~.
+In the ~app~ folder there is the ~Main.hs~ file which is the entrypoint to the compiler.
 
-Folder ~app~ zawiera program uruchamiający kompilator.
+** Features
 
-** Zaimplementowane funkcje
+The language supports standard instructions like variable declarations, if-else statements, while loops, first order functions, etc. It is completely strictly and statically typed. 
 
-Język powienien wspierać:
-  - instrukcje warunkowe
-  - pętlę while
-  - funkcje pierwszego rzędu
-  - statyczne typowanie
-  - operacje logiczne i liczbowe
-  - zmienne lokalne
-  - stringi
-  - klasy
-  - dziedziczenie klas
-  - metody wirtualne
-  - proste optymalizacje kodu X86 typu peephole
+Classes support inheritance and virtual method overriding. The syntax is very similar to the one known from Java. Example:
 
-Niektóre wymagania językowe mogą być jeszcze niespełnione, dołożę wszelkich starań by w drugiej iteracji język był zgodny ze specyfikacją.
+#+BEGIN_SRC java
+class Base {
+  new() { }
 
-Czego nie ma a będzie:
-  - niektóre domyślne wartości zmiennych
-  - optymalizacja wyrażeń logicznych
-  - wyliczanie stałych
-  - hermetyzacja klas
-  - Porządny makefile
-  - Pola i metody statyczne
+  new smart(int x) {
+    if (x == 0) {
+      Sub1 o;
+      return o;
+    } else if (x == 1) {
+      Sub2 o;
+      return o;
+    } else if (x == 2) {
+      Sub3 o;
+      return o;
+    } else return this;
+  }
+
+  public int f(int x) {
+    printInt(x);
+    return 21;
+  }
+}
+
+class Sub1 extends Base {
+  int f(int x) {
+    printInt(x);
+    return 42;
+  }
+}
+class Sub2 extends Base {
+  int f(int x) {
+    printInt(x);
+    return super.f(x) + 10000;
+  }
+}
+class Sub3 extends Base {}
+
+int main() {
+  printInt(new Base().f(-1));
+  printInt(new Base.smart(0).f(0));
+  printInt(new Base.smart(1).f(1));
+  printInt(new Base.smart(2).f(2));
+  printInt(new Base.smart(3).f(3));
+  return 0;
+}
+#+END_SRC
+
+Note the unconvenient approach to constructors – they actually return the new instance (if not provided, ~this~ will be returned). This means, that they can depending on some circumstances return any other arbitrarily constructed object of their subclass. This feature can be treated as built-in support for factory design pattern. Moreover, the constructors can have names (awesome, isn't it?).
+
+** Optimizations
+
+The compiler performs some basic expression evaluation and constant propagation (does not inline functions tho). This trivially leads to dead code removal. Tail recursion is supported. After that it does peephole optimization on produced assembly.
+
+TODO: reasonable register allocation, because the current one is bruteforced
