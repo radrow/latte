@@ -1,0 +1,5 @@
+class C { public int f() {return 3;}}
+int main() {
+  C c;
+  return c.f(1);
+}

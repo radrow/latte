@@ -1,0 +1,2 @@
+class C { private int x; }
+int main () { C c; return c.x; }

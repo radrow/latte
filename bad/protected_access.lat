@@ -1,0 +1,2 @@
+class C { protected int x; }
+int main () { C c; return c.x; }

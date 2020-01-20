@@ -1,0 +1,2 @@
+class C { new con() {} new con() {} }
+int main() {}

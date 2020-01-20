@@ -1,0 +1,7 @@
+int f() {
+   int x = readInt();
+   if(x > 0) { return 3; }
+   else { x++; }
+}
+
+int main() { return f(); }

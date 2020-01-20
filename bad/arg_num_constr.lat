@@ -1,0 +1,2 @@
+class C { new() {} }
+int main() { C c = new C(1); }
