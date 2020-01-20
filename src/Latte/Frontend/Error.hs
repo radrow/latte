@@ -6,6 +6,8 @@ module Latte.Frontend.Error where
 import Latte.Frontend.AST
 import Latte.Pretty
 
+import Prelude hiding ((<>))
+
 
 data Error
   = MainType
@@ -30,24 +32,29 @@ data Error
   | UndefinedConstructor ClassId (Maybe ConstructorId)
   | NoReturn
   | NotAClass Type
-  | NotInClass
+  | ThisNotInClass
+  | SuperNotInClass
   | ThisArgName
   | BadPrivateAccess ClassId String
   | BadProtectedAccess ClassId String
+  | NoSuperClass ClassId
+  | BadSuperUse
 
 instance Pretty Error where
   pPrint = \case
     MainType ->
       "plz man cant u into c? ? ?" <+> emph "main" <+> "muzzt B" <+> emph "int main()"
+
     NoMain ->
       emph "main" <+> "where r u"
+
     TypeMatch t1 t2 ->
       "Opsie Whoopsie x_x I kant metch typz!! me wnted" <+>
       emph (pPrint t1) <+> "but @daddy@ gived" <+> emph (pPrint t2) <+> "but thx anyway Xoxox"
 
     OperatorTypeMatch o goods (badL, badR) ->
-      "Dud," <+> emph (pPrint o) <+> "hav soooo MANY winky-chicky suits ;3 look at them *.*" <+>
-      emph (vcat [pPrint l <+> pPrint o <+> pPrint r | (l, r) <- goods]) $+$
+      "Dud," <+> emph (pPrint o) <+> "hav soooo MANY winky-chicky suits ;3 look at them *.*" $+$
+      sep (punctuate comma [emph (pPrint l <+> pPrint o <+> pPrint r) | (l, r) <- goods]) $+$
       "and u giv" <+>
       emph (pPrint badL <+> pPrint o <+> pPrint badR) <+> "-,-"
 
@@ -67,7 +74,7 @@ instance Pretty Error where
       "why r u doin" <+> emph (pPrint i) <+> "too much "
 
     DuplicateFun i ->
-      "i know" <+> emph (pPrint i) <+> ". gimme some other boi lol"
+      "i alrdy know" <+> emph (pPrint i) <+> ". gimme some other boi lol"
 
     DuplicateClass i ->
       "ok man. i get u looooooooov xoxoxox kawaii" <+> emph (pPrint i) <+> "but 1 is just enough "
@@ -114,8 +121,11 @@ instance Pretty Error where
     UndefinedConstructor c Nothing ->
       "no unnamed bois allowd in" <+> emph (pPrint c)
 
-    NotInClass ->
+    ThisNotInClass ->
       emph "this" <+> "isnt a claz xC xC xC"
+
+    SuperNotInClass ->
+      "AWWWW *.* thiz STMT iz sooo o o o" <+> emph "super" <> "-dooper, but can make it more classy u know?? plox plox"
 
     ThisArgName ->
       emph "this" <+> "is a bad namey-calley for such uwu arg :( :'("
@@ -126,3 +136,9 @@ instance Pretty Error where
 
     BadProtectedAccess c f ->
       "daddy wanna touch my" <+> emph (text f) <+> "in my" <+> emph (pPrint c) <+> "but *moMmy* hav" <+> emph "protected" <+> "it xoxox"
+
+    NoSuperClass c ->
+      emph (pPrint c) <+> "haz no @daddy@ rip"
+
+    BadSuperUse ->
+      "hoI ^^ ur lost?? lemme' tel u smth: u can B " <+> emph "super" <+> "only in claz ;)) with some dotty OwO syntaxoxo"

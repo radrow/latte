@@ -108,6 +108,7 @@ data RawExpr (l :: Nat) where
   RENew   :: Ann -> ClassId -> Maybe ConstructorId -> [RawExpr 0] -> RawExpr 7
   REVar   :: Ann -> VarId                                   -> RawExpr 7
   REPar   :: Ann -> RawExpr 0                               -> RawExpr 7
+  RESuper :: Ann                                            -> RawExpr 7
   RECoe   ::        RawExpr (n + 1)                         -> RawExpr n
 
 type E = RawExpr 0
@@ -138,14 +139,15 @@ type family ExprDecoration (s :: Stage) where
 
 
 data Expr (s :: Stage) where
-  ELit  :: Ann -> ExprDecoration s -> Lit -> Expr s
-  EApp  :: Ann -> ExprDecoration s -> FunId -> [Expr s] -> Expr s
-  EVar  :: Ann -> ExprDecoration s -> VarId -> Expr s
-  EUnOp :: Ann -> ExprDecoration s -> UnOp -> Expr s -> Expr s
-  EOp   :: Ann -> ExprDecoration s -> AnyOp -> Expr s -> Expr s -> Expr s
-  EProj :: Ann -> ExprDecoration s -> Expr s -> FieldId -> Expr s
-  EMApp :: Ann -> ExprDecoration s -> Expr s -> MethodId -> [Expr s] -> Expr s
-  ENew :: Ann -> ExprDecoration s -> ClassId -> Maybe ConstructorId -> [Expr s] -> Expr s
+  ELit   :: Ann -> ExprDecoration s -> Lit -> Expr s
+  EApp   :: Ann -> ExprDecoration s -> FunId -> [Expr s] -> Expr s
+  EVar   :: Ann -> ExprDecoration s -> VarId -> Expr s
+  EUnOp  :: Ann -> ExprDecoration s -> UnOp -> Expr s -> Expr s
+  EOp    :: Ann -> ExprDecoration s -> AnyOp -> Expr s -> Expr s -> Expr s
+  EProj  :: Ann -> ExprDecoration s -> Expr s -> FieldId -> Expr s
+  EMApp  :: Ann -> ExprDecoration s -> Expr s -> MethodId -> [Expr s] -> Expr s
+  ENew   :: Ann -> ExprDecoration s -> ClassId -> Maybe ConstructorId -> [Expr s] -> Expr s
+  ESuper :: Ann -> ExprDecoration s -> Expr s
 
 getExprDec :: Expr s -> ExprDecoration s
 getExprDec = \case
@@ -157,6 +159,7 @@ getExprDec = \case
   EProj _ a _ _ -> a
   EMApp _ a _ _ _ -> a
   ENew _ a _ _ _ -> a
+  ESuper _ a -> a
 
 
 data Stmt (e :: Stage)
@@ -379,6 +382,7 @@ instance Pretty (Expr a) where
                            parens (cat $ punctuate comma $ map pPrint as)
     ENew _ _ cl cr as -> "new" <+> pPrint cl <> maybe empty (\n -> "." <> pPrint n) cr <>
       parens (cat $ punctuate comma $ map pPrint as)
+    ESuper _ _ -> "super"
 
 
 block :: Doc -> Doc
@@ -459,8 +463,9 @@ instance Pretty ClassMemberPlace where
 
 instance Pretty ClassMemberAccess where
   pPrint = \case
-    Private -> empty
-    Public -> "public"
+    Private   -> "private"
+    Public    -> "public"
+    Protected -> "protected"
 
 
 instance Pretty (Program a) where
@@ -477,3 +482,4 @@ instance HasAnn (Expr p) Ann where
     EProj a dec e i -> fmap (\a2 -> EProj a2 dec e i) (f a)
     EMApp a dec e i as -> fmap (\a2 -> EMApp a2 dec e i as) (f a)
     ENew a dec c i as -> fmap (\a2 -> ENew a2 dec c i as) (f a)
+    ESuper a dec -> fmap (\a2 -> ESuper a2 dec) (f a)

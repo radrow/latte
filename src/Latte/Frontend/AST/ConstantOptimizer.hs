@@ -165,11 +165,11 @@ varsUpdated = \case
   SEmpty _a -> S.empty
 
 
-oStmtScoped :: Stmt 'Typed -> Optimizer (Stmt 'Typed)
-oStmtScoped ob = do
+scoped :: (a -> Optimizer b) -> a -> Optimizer b
+scoped act ob = do
   backupStop <- use earlyStop
   modify $ set earlyStop False
-  res <- oStmt ob
+  res <- act ob
   modify $ set earlyStop backupStop
   return res
 
@@ -211,7 +211,7 @@ oStmt s = case s of
       LB False ->
         oStmt k
       _ -> do
-        ot <- oStmtScoped t
+        ot <- scoped oStmt t
         let ut = varsUpdated t
         unsetVars ut
         continue (SCond a oc ot) k
@@ -223,12 +223,15 @@ oStmt s = case s of
       LB False ->
         oStmt $ SBlock a e k
       _ -> do
-        ot <- oStmtScoped t
-        oe <- oStmtScoped e
+        let oStmtWithStop x = (,) <$> oStmt x <*> use earlyStop
+        (ot, st) <- scoped oStmtWithStop t
+        (oe, se) <- scoped oStmtWithStop e
         let ut = varsUpdated t
             ue = varsUpdated e
         unsetVars (S.union ut ue)
-        continue (SCondElse a oc ot oe) k
+        if st && se
+          then stop $ (SCondElse a oc ot oe (SEmpty fakeAnn))
+          else continue (SCondElse a oc ot oe) k
   SWhile a c b k -> do
     let ub = varsUpdated b
     backup <- use valMap
@@ -241,7 +244,7 @@ oStmt s = case s of
         modify $ set valMap backup
         oStmt k
       _ -> do
-        ob <- oStmtScoped b
+        ob <- scoped oStmt b
         continue (SWhile a oc ob) k
   SExp a e k -> do
     oe <- oExpr e

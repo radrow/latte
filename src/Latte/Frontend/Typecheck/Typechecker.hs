@@ -51,7 +51,7 @@ tcVar :: VarId -> Typechecker Type
 tcVar v = (M.lookup v) <$> view definedVars >>= \case
   Nothing | v == "this" -> do
               view currentClass >>= \case
-                Nothing -> raiseError NotInClass
+                Nothing -> raiseError ThisNotInClass
                 Just c -> pure $ TClass c
   Nothing -> raiseError $ UndefinedVar v
   Just t -> pure t
@@ -137,6 +137,15 @@ matchClass c1 c2 = isSuper c1 c2 >>= \case
   False -> raiseError $ ClassMatch c1 c2
 
 
+getSuper :: Typechecker ClassId
+getSuper = do
+  view currentClass >>= \case
+    Nothing -> raiseError $ SuperNotInClass
+    Just c -> getClassEntry c >>= \ce -> case ce^.super of
+      Nothing -> raiseError $ NoSuperClass c
+      Just x -> return x
+
+
 assertType :: Type -> Expr 'Typed -> Typechecker ()
 assertType t e = matchTypes t (getExprDec e)
 
@@ -201,6 +210,10 @@ tcExpr = \case
     tr <- tcExpr r
     tres <- tcOp o (getExprDec tl) (getExprDec tr)
     pure $ EOp a tres o tl tr
+  EProj apr () (ESuper a ()) i -> withAnn a $ do
+    s <- getSuper
+    t <- tcField s i
+    pure $ EProj apr t (ESuper a (TClass s)) i
   EProj a () e i -> withAnn a $ do
     et <- tcExpr e
     case getExprDec et of
@@ -208,10 +221,19 @@ tcExpr = \case
         t <- tcField c i
         pure $ EProj a t et i
       t -> raiseError $ NotAClass t
+  EMApp apr () (ESuper a ()) i as -> withAnn a $ do
+    s <- getSuper
+    (rt, argst) <- tcMethod s i
+    typedArgs <- mapM tcExpr as
+    when (length as /= length argst) $
+      raiseError $ ArgNumMethod s i (length argst) (length as)
+    forM_ (zip argst typedArgs) $ \(expected, typed) ->
+      assertType expected typed
+    pure $ EMApp apr rt (ESuper a (TClass s)) i typedArgs
   EMApp a () e i as -> withAnn a $ do
     et <- tcExpr e
     case getExprDec et of
-      TClass c -> withAnn a $ do
+      TClass c -> do
         (rt, argst) <- tcMethod c i
         typedArgs <- mapM tcExpr as
         when (length as /= length argst) $
@@ -228,6 +250,7 @@ tcExpr = \case
     forM_ (zip argst typedArgs) $ \(expected, typed) ->
       assertType expected typed
     pure $ ENew a (TClass c) c i typedArgs
+  ESuper a () -> withAnn a $ raiseError BadSuperUse
 
 
 currentRetType :: Typechecker Type
@@ -355,7 +378,7 @@ buildInitialEnv defs = do
            case d of
              TDFun fdef -> do
                when (fdef^.name == "main" && (fdef^.retType /= TInt || not (null $ fdef^.args))) $
-                 raiseErrorNoLoc MainType
+                 raiseErrorAt (fdef^.ann) MainType
                when (fdef^.name `elem` (M.keys $ prev^.definedFuns)) $
                  raiseErrorAt (fdef^.ann) $ DuplicateFun (fdef^.name)
                pure $

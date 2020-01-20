@@ -47,13 +47,12 @@ withAnnP = withAnn . pure
 keywords :: [String]
 keywords =
   [ "return"
-  , "while"
-  , "if"
-  , "else"
+  , "while", "if" , "else"
   , "int", "string", "boolean", "void"
   , "true", "false"
-  , "class", "public", "private"
+  , "class", "public", "private", "protected"
   , "static", "new"
+  , "super"
   ]
 
 
@@ -249,6 +248,7 @@ expr6 = do
 expr7 :: Parser (AST.RawExpr 7)
 expr7 = choice
   [ withAnnP AST.REPar <*> paren expr0
+  , withAnn (AST.RESuper <$ word "super")
   , withAnnP AST.RELit <*> lit
   , try $ withAnnP AST.REApp <*> funId <*> appliedArgs
   , withAnnP AST.RENew <*> (word "new" *> classId) <*> optional (symbol "." *> constructorId)

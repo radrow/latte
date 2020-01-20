@@ -23,6 +23,7 @@ entailExpr = \case
   RECoe   e -> entailExpr e
   REProj  a e i -> EProj a () (entailExpr e) i
   REMApp  a e i as -> EMApp a () (entailExpr e) i (map entailExpr as)
+  RESuper a -> ESuper a ()
 
 
 entailStmt :: RawStmt -> Stmt 'Untyped

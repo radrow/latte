@@ -26,7 +26,7 @@ data VarId = VarId {vId :: Int} deriving (Ord, Eq)
 data Label = Label {lId :: String} deriving (Ord, Eq)
 
 
-data Type = TInt Int | TString | TVoid | TObj Int [Type]
+data Type = TInt Int | TString | TVoid | TObj Int [Type] | TCId
 
 
 data IR = IR [Routine]
@@ -61,9 +61,10 @@ data Expr
   | UnOp UnOp Const
   | Const Const
   | Call String [Const]
-  | VCall String [Const]
+  | VCall String Const Const [Const]
   | NewObj
   | Proj Const Int
+  | GetCId Const
 
 
 data UnOp = Neg | Not
@@ -163,6 +164,7 @@ instance Pretty Type where
     TString -> "string"
     TVoid -> "void"
     TObj i _ -> "obj:" <> int i
+    TCId -> "classID"
 
 
 instance Pretty Label where
@@ -218,9 +220,10 @@ instance Pretty Expr where
     RelOp o l r -> pPrint o <+> pPrint l <+> pPrint r
     Const c -> pPrint c
     Call f as -> text f <> parens (cat $ punctuate comma $ map pPrint as)
-    VCall f as -> "vrt" <+> text f <> parens (cat $ punctuate comma $ map pPrint as)
+    VCall f cid ob as -> pPrint cid <> ":" <> text f <> parens (cat $ punctuate comma $ map pPrint (ob:as))
     NewObj -> "new_obj"
     Proj a i -> "π_" <> int i <+> pPrint a
+    GetCId o -> "classID" <+> pPrint o
 
 
 instance Pretty Cond where

@@ -185,16 +185,24 @@ cExpr ex k = case ex of
   AST.EProj _ t e fld -> cExpr e $ \ce -> do
     tt <- liftTop $ cType t
     v <- newVar tt
-    let (AST.TClass c) = AST.getExprDec e
-    offset <- liftTop $ views fieldEnv (M.! (c,fld))
+    let (AST.TClass c) = case e of
+          AST.ESuper _ st -> st
+          _ -> AST.getExprDec e
+    offset <- liftTop $ views fieldEnv (M.! (c, fld))
     write [Assg tt v (Proj ce offset)]
     k $ CVar v
   AST.EMApp _ rt e m as -> do
     _tailRec <- view tailCall
     local (set tailCall False) $ cExpr e $ \ce -> mapConts cExpr as $ \asRefs -> do
       t <- liftTop $ cType rt
+      cid <- newVar TCId
       v <- newVar t
-      write $ [Assg t v (VCall (m^.AST.idStr) (ce:asRefs))]
+      case e of
+        AST.ESuper _ (AST.TClass st) -> do
+          supId <- liftTop $ views classIds (M.! st)
+          write [Assg TCId cid (Const $ CInt (fromIntegral supId))]
+        _ -> write [Assg TCId cid (GetCId ce)]
+      write [Assg t v (VCall (m^.AST.idStr) (CVar cid) ce asRefs)]
       k $ CVar v
   AST.ENew _ t c n as -> mapConts cExpr as $ \asRefs -> do
     tt <- liftTop $ cType t
@@ -206,6 +214,7 @@ cExpr ex k = case ex of
           , Assg tt construct (Call labelName (CVar alloc:asRefs))
           ]
     k $ CVar construct
+  AST.ESuper _ _ -> k $ CVar (VarId 0)
 
 
 cCondJump :: AST.Expr 'AST.Typed -> Label -> Label -> Compiler ()
@@ -268,11 +277,12 @@ cStmt = \case
   AST.SDecl _ t v k -> do
     tt <- liftTop $ cType t
     vi <- registerVar tt v
-    case tt of
-      TObj _ _ -> write [Assg tt vi NewObj]
-      TInt _ -> write [Assg tt vi (Const $ CInt 0)]
-      TString -> write [Assg tt vi (Const $ CStr "")]
-      TVoid -> pure ()
+    case t of
+      AST.TClass _ -> write [Assg tt vi NewObj]
+      AST.TInt -> write [Assg tt vi (Const $ CInt 0)]
+      AST.TString -> write [Assg tt vi (Const $ CStr "")]
+      AST.TVoid -> pure ()
+      AST.TBool -> write [Assg tt vi (Const $ CInt 0)]
     cStmt k
   AST.SIncr _ v k -> do
     t <- liftTop $ cType AST.TInt

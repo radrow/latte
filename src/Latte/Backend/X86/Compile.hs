@@ -212,12 +212,20 @@ cExpr t vloc e = case e of
     add (OConst 4) esp
     mov (OConst $ fromIntegral idx) (mem EAX)
     mov eax vloc
-  IR.VCall f as -> do
+  IR.VCall f cid obj as -> do
     forM_ (reverse as) $ \a -> do
       cConst a eax
       push eax
+    cConst obj eax
+    push eax
+    cConst cid eax
+    push eax
     call (OLabel $ makeMethodDispatcherName f)
-    add (OConst $ 4 * fromIntegral (length as)) esp
+    add (OConst $ 4 * fromIntegral (length as + 1)) esp
+    mov eax vloc
+  IR.GetCId c -> do
+    cConst c eax
+    mov (mem EAX) eax
     mov eax vloc
 
 cInstr :: IR.Instr -> Compiler ()
@@ -259,7 +267,7 @@ cFinInstr i = comment (pp i) >> case i of
       cConst a eax
       mov eax (mem (idx :: Int) EBP)
     jmp (OLabel $ f ++ "_init")
-  IR.TailVCall _f _as -> error "Tail virtual calls not supported"
+  IR.TailVCall _f _as -> error "Tail virtual calls are not supported yet"
   IR.Unreachable ->
     call (OLabel "__unreachable")
 
@@ -312,11 +320,12 @@ cVirtualMethodTables methodMap = do
       long e
     label dispatcherName
 
+    pop edx
+    pop ecx
+    push edx
+
     push ebp
     mov esp ebp
-
-    mov (mem (8 :: Int) EBP) ecx
-    mov (mem ECX) ecx
 
     lea (OLabel vtableName) edx
     mov (mem (EDX, ECX, 4 :: Int)) edx
