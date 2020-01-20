@@ -8,6 +8,7 @@ import qualified Latte.Frontend.Typechecker as Tc
 
 import Data.Maybe(catMaybes)
 import Data.String
+import Data.Foldable
 import Data.List(foldl', nub)
 import Data.Functor
 import qualified Data.Map as M
@@ -39,13 +40,6 @@ newVar :: Type -> Compiler VarId
 newVar t = do
   i <- VarId <$> newSup
   modify $ over typeMap (M.insert i t)
-  return i
-
-
-registerVar :: Type -> AST.VarId -> Compiler VarId
-registerVar t v = do
-  i <- newVar t
-  modify (over varMap (M.insert v i))
   return i
 
 
@@ -276,13 +270,22 @@ cStmt = \case
     cStmt k
   AST.SDecl _ t v k -> do
     tt <- liftTop $ cType t
-    vi <- registerVar tt v
-    case t of
-      AST.TClass _ -> write [Assg tt vi NewObj]
-      AST.TInt -> write [Assg tt vi (Const $ CInt 0)]
-      AST.TString -> write [Assg tt vi (Const $ CStr "")]
-      AST.TVoid -> pure ()
-      AST.TBool -> write [Assg tt vi (Const $ CInt 0)]
+    (newVmap, newTmap) <-
+      foldrM (\(var, mval) (pv, pt) -> do
+                 i <- newVar tt
+                 case mval of
+                   Nothing -> do
+                     case t of
+                       AST.TClass _ -> write [Assg tt i NewObj]
+                       AST.TInt -> write [Assg tt i (Const $ CInt 0)]
+                       AST.TString -> write [Assg tt i (Const $ CStr "")]
+                       AST.TVoid -> pure ()
+                       AST.TBool -> write [Assg tt i (Const $ CInt 0)]
+                   Just val -> cExpr val $ \vv -> do
+                     write [Assg tt i (Const vv)]
+                 return (M.insert var i pv, M.insert i tt pt)
+             ) (M.empty, M.empty) v
+    modify $ over varMap (M.union newVmap) . over typeMap (M.union newTmap)
     cStmt k
   AST.SIncr _ v k -> do
     t <- liftTop $ cType AST.TInt

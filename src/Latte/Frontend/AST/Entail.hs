@@ -3,6 +3,7 @@ module Latte.Frontend.AST.Entail where
 
 import Latte.Frontend.AST.Types
 
+import qualified Data.List.NonEmpty as NE
 import Prelude hiding ((<>), EQ, GT, LT)
 
 
@@ -32,13 +33,7 @@ entailStmt s =
       entailSingle = \case
         RSAssg a i v -> SAssg a i (entailExpr v)
         RSFieldAssg a e i v -> SFieldAssg a (entailExpr e) i (entailExpr v)
-        RSDecl a t vs ->
-          foldr (\(i, mval) lk ->
-                   SDecl a t i .
-                   case mval of
-                     Nothing -> lk
-                     Just e -> SAssg a i (entailExpr e) . lk
-                ) id vs
+        RSDecl a t vs -> SDecl a t $ flip fmap (NE.toList vs) $ \(i, mval) -> (i, fmap entailExpr mval)
         RSIncr a i -> SIncr a i
         RSDecr a i -> SDecr a i
         RSRet a e -> SRet a (entailExpr e)

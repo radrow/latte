@@ -10,6 +10,7 @@ import Latte.Frontend.Typecheck.Types
 import qualified Latte.Frontend.AST.ConstantOptimizer as CO
 
 import Data.Functor
+import Data.Foldable
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.List.NonEmpty as NE
@@ -268,9 +269,23 @@ tcStmt = \case
   SDecl a t v k -> withAnn a $ do
     tcType t
     vars <- view currentScopeVars
-    when (S.member v vars) (raiseError $ DuplicateVar v)
-    local (over definedVars (M.insert v t) . over currentScopeVars (S.insert v)) $
-      SDecl a t v <$> tcStmt k
+    void $ flip runStateT vars $ forM_ v $ \(var, _) -> do
+      myvars <- get
+      when (S.member var myvars) (lift $ raiseError $ DuplicateVar var)
+      modify (S.insert var)
+    oldenv <- view definedVars
+    (newEnv, tv) <-
+      foldrM ( \(var, mval) (penv, pdecls) -> do
+                 case mval of
+                   Nothing -> return (M.insert var t penv, (var, Nothing):pdecls)
+                   Just e -> do
+                     et <- tcExpr e
+                     assertType t et
+                     return (M.insert var t penv, (var, Just et):pdecls)
+             ) (oldenv, []) v
+    local ( set definedVars newEnv .
+            over currentScopeVars (S.union $ S.fromList (fmap fst v))) $
+      SDecl a t tv <$> tcStmt k
   SAssg a v e k -> withAnn a $ do
     et <- tcExpr e
     vt <- tcVar v
@@ -421,7 +436,9 @@ tcTopDef = \case
       return tb
     pure $ TDFun $ FunDef (fdef^.ann) (fdef^.retType) (fdef^.name) (fdef^.args) tbody
   TDClass cdef -> do
-    let tcMember :: ClassMember 'Untyped -> Typechecker (ClassMember 'Typed)
+    let this = Arg { _argAnn = fakeAnn, _argName = "this", _argTy = TClass (cdef^.name) }
+
+        tcMember :: ClassMember 'Untyped -> Typechecker (ClassMember 'Typed)
         tcMember = \case
           CMMethod mdef -> do
             tcType $ mdef^.retType
@@ -435,7 +452,7 @@ tcTopDef = \case
             tbody <- case mdef^.body of
               Nothing -> pure Nothing
               Just b -> Just <$>
-                do tb <- CO.optimizeBody (mdef^.args) <$> local setBodyEnv (tcStmt b)
+                do tb <- CO.optimizeBody (this : mdef^.args) <$> local setBodyEnv (tcStmt b)
                    when (not $ (mdef^.retType == TVoid) || isReturning tb) $
                      raiseErrorAt (mdef^.ann) NoReturn
                    return tb
@@ -477,7 +494,8 @@ tcTopDef = \case
                   set retType (Just $ TClass (cdef^.name)) .
                   set currentScopeName (fmap (^.idStr) (codef^.name) <|> Just "unnamed constructor") .
                   set currentClass (Just $ cdef^.name)
-            tbody <- CO.optimizeBody (codef^.args) <$> local setBodyEnv (tcStmt (codef^.body))
+            tbody <- CO.optimizeBody (this : codef^.args) <$>
+                     local setBodyEnv (tcStmt (codef^.body))
             pure $ CMConstructor $ Constructor
               { _constructorAnn    = codef^.ann
               , _constructorAccess = codef^.access

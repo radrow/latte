@@ -5,6 +5,7 @@
 module Latte.Frontend.AST.ConstantOptimizer(optimizeBody, optimizeProgram) where
 
 import Latte.Frontend.AST
+import Data.Foldable
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Lens
@@ -43,7 +44,8 @@ getVar v = ask >>= \rm -> uses valMap (M.lookup (rm `idOf` v))
 
 idOf :: NameMap -> VarId -> Int
 idOf nm v = case M.lookup v nm of
-  Nothing -> error $ "wtf, no such name " ++ v^.idStr
+  Nothing -> error $ "optimizer wtf, no such name " ++ v^.idStr ++
+            ". map: " ++ (show $ M.toList nm)
   Just x -> x
 
 
@@ -150,7 +152,7 @@ oExpr ex = case ex of
 
 varsUpdated :: Stmt 'Typed -> S.Set VarId
 varsUpdated = \case
-  SDecl _a _t v k -> S.delete v $ varsUpdated k
+  SDecl _a _t v k -> varsUpdated k S.\\ S.fromList (fmap fst v)
   SAssg _a v _e k -> S.insert v $ varsUpdated k
   SFieldAssg _a _b _f _e k -> varsUpdated k
   SIncr _a v k -> S.insert v $ varsUpdated k
@@ -182,9 +184,30 @@ continue b k = do
 
 oStmt :: Stmt 'Typed -> Optimizer (Stmt 'Typed)
 oStmt s = case s of
-  SDecl a t v k -> do
-    uniqV <- getSup
-    local (M.insert v uniqV) $ continue (SDecl a t v) k
+  SDecl a t decls k -> do
+    oldvalmap <- use valMap
+    oldnamemap <- ask
+    (odecls, newvalmap, newnamemap) <-
+      foldrM (\(var, mval) (pdecls, pvmap, pnmap) -> do
+                 uniqV <- getSup
+                 case mval of
+                   Nothing -> do
+                     return ( ((var, Nothing):pdecls)
+                            , M.delete uniqV pvmap
+                            , M.insert var uniqV pnmap)
+                   Just e -> do
+                     oe <- oExpr e
+                     return ( ((var, Just oe):pdecls)
+                            , case oe of
+                                ELit _ _ l ->
+                                  M.insert uniqV l pvmap
+                                _ -> M.delete uniqV pvmap
+                            , M.insert var uniqV pnmap
+                            )
+             ) ([], oldvalmap, oldnamemap) decls
+    modify (set valMap newvalmap)
+    local (const newnamemap) $
+      continue (SDecl a t odecls) k
   SAssg _a v (EVar _ _ vv) k | v == vv -> oStmt k
   SAssg a v e k -> do
     oe <- oExpr e
@@ -267,8 +290,9 @@ oStmt s = case s of
 
 
 optimizeBody :: [Arg] -> Stmt 'Typed -> Stmt 'Typed
-optimizeBody as s = evalState (runReaderT (oStmt s) (M.fromList $ zip (fmap (^.name) as) [-1, -2..]))
-  (St M.empty False 0)
+optimizeBody as s = evalState (runReaderT (oStmt s)
+                               (M.fromList $ zip (fmap (^.name) as) [-1, -2..])
+                              ) (St M.empty False 0)
 
 
 optimizeProgram :: Program 'Typed -> Program 'Typed
@@ -280,7 +304,10 @@ optimizeProgram (Program ts) = Program $ flip fmap ts $ \case
      let this = Arg { _argAnn = fakeAnn, _argName = "this", _argTy = TClass (cs^.name) }
      in flip fmap cms $
      \case
-        CMField f -> CMField f
-        CMMethod m@Method{_methodArgs = as, _methodBody = b} -> CMMethod m{_methodBody = fmap (optimizeBody (this:as)) b}
-        CMConstructor c@Constructor{_constructorArgs = as, _constructorBody = b} -> CMConstructor c{_constructorBody = optimizeBody (this:as) b}
+        CMField f ->
+          CMField f
+        CMMethod m@Method{_methodArgs = as, _methodBody = b} ->
+          CMMethod m{_methodBody = fmap (optimizeBody (this:as)) b}
+        CMConstructor c@Constructor{_constructorArgs = as, _constructorBody = b} ->
+          CMConstructor c{_constructorBody = optimizeBody (this:as) b}
     }

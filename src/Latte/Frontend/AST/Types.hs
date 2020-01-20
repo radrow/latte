@@ -165,7 +165,7 @@ getExprDec = \case
 data Stmt (e :: Stage)
   = SAssg Ann VarId (Expr e) (Stmt e)
   | SFieldAssg Ann (Expr e) FieldId (Expr e) (Stmt e)
-  | SDecl Ann Type VarId (Stmt e)
+  | SDecl Ann Type [(VarId, (Maybe (Expr e)))] (Stmt e)
   | SIncr Ann VarId (Stmt e)
   | SDecr Ann VarId (Stmt e)
   | SRet Ann (Expr e) (Stmt e)
@@ -393,7 +393,11 @@ instance Pretty (Stmt a) where
   pPrint = \case
     SAssg _ v e cont -> pPrint v <+> "=" <+> pPrint e <> semi $+$ pPrint cont
     SFieldAssg _ b v e cont -> pPrint b <> "." <> pPrint v <+> "=" <+> pPrint e <> semi $+$ pPrint cont
-    SDecl _ t v cont -> pPrint t <+> pPrint v <> semi $+$ pPrint cont
+    SDecl _ t v cont -> pPrint t <+>
+      vcat (punctuate comma $ flip fmap v $ \(var, mval) -> case mval of
+               Nothing -> pPrint var
+               Just val  -> pPrint var <+> "=" <+> pPrint val
+           ) <> semi $+$ pPrint cont
     SIncr _ v cont -> pPrint v <> "++" <> semi $+$ pPrint cont
     SDecr _ v cont -> pPrint v <> "--" <> semi $+$ pPrint cont
     SRet _ e cont -> "return" <+> pPrint e <> semi $+$ pPrint cont
