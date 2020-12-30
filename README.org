@@ -2,7 +2,7 @@
 
 * Latte
 
-A simple object-oriented programming language compiler. An assesment task for MIMUW Compiler Construction course.
+A simple object-oriented programming language compiler written as an assesment task for MIMUW Compiler Construction course.
 
 ** Build & Installation
 
@@ -23,7 +23,7 @@ In the ~app~ folder there is the ~Main.hs~ file which is the entrypoint to the c
 
 ** Features
 
-The language supports standard instructions like variable declarations, if-else statements, while loops, first order functions, etc. It is completely strictly and statically typed. 
+The language supports standard instructions like variable declarations, if-else statements, while loops, first order functions, etc. Uses strict and static type system.
 
 Classes support inheritance and virtual method overriding. The syntax is very similar to the one known from Java. Example:
 
@@ -74,10 +74,10 @@ int main() {
 }
 #+END_SRC
 
-Note the unconvenient approach to constructors – they actually return the new instance (if not provided, ~this~ will be returned). This means, that they can depending on some circumstances return any other arbitrarily constructed object of their subclass. This feature can be treated as built-in support for factory design pattern. Moreover, the constructors can have names (awesome, isn't it?).
+One of the features that goes beyond the standard conventions is a more functional approach to constructors. Each of those actually returns the newly created instance (~this~ if not explicitly stated). This means that they are capable of returning any other arbitrarily constructed object of their subclass. This feature can be treated as a built-in support for the factory design pattern. Moreover, the constructors can have names (awesome, isn't it?).
 
 ** Optimizations
 
-The compiler performs some basic expression evaluation and constant propagation (does not inline functions tho). This trivially leads to dead code removal. Tail recursion is supported. After that it does peephole optimization on produced assembly.
+The compiler performs some basic expression evaluation and constant propagation (does not inline functions tho). Dead code elimination is also supported. TCO will optimize functions where all self references are in tail positions. As the last thing it does peephole optimization on produced assembly.
 
 TODO: reasonable register allocation, because the current one is bruteforced
